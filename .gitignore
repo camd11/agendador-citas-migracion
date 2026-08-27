@@ -1,0 +1,5 @@
+# NUNCA subir credenciales ni datos de clientes
+config.txt
+clientes/
+*.cfg
+registro.txt
