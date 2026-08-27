@@ -36,7 +36,7 @@ $TRAMITES = [ordered]@{
 # ---------------- ventana ----------------
 $f = New-Object Windows.Forms.Form
 $f.Text = 'Agendador de Citas - Migracion Colombia'
-$f.Size = New-Object Drawing.Size(760, 640)
+$f.Size = New-Object Drawing.Size(760, 660)
 $f.StartPosition = 'CenterScreen'
 $f.BackColor = [Drawing.Color]::White
 $f.FormBorderStyle = 'FixedSingle'
@@ -105,23 +105,34 @@ foreach($k in $SEDES.Keys){ [void]$cboSede.Items.Add($k) }
 $cboSede.SelectedIndex=0
 $f.Controls.Add($cboSede)
 
+Lbl 'Parar a las' 380 248 200 $true | Out-Null
+$txtStop = New-Object Windows.Forms.TextBox
+$txtStop.Location=New-Object Drawing.Point(380,270); $txtStop.Size=New-Object Drawing.Size(80,24)
+$txtStop.Text='17:15'; $txtStop.Font=New-Object Drawing.Font('Segoe UI',10)
+$f.Controls.Add($txtStop)
+$lblStopHint = New-Object Windows.Forms.Label
+$lblStopHint.Text='(hora de 24h; se detiene solo)'
+$lblStopHint.Location=New-Object Drawing.Point(466,274); $lblStopHint.Size=New-Object Drawing.Size(260,20)
+$lblStopHint.Font=New-Object Drawing.Font('Segoe UI',8); $lblStopHint.ForeColor=[Drawing.Color]::Gray
+$f.Controls.Add($lblStopHint)
+
 $chkSave = New-Object Windows.Forms.CheckBox
 $chkSave.Text='Guardar este cliente en este equipo'
-$chkSave.Location=New-Object Drawing.Point(380,271); $chkSave.Size=New-Object Drawing.Size(340,24)
+$chkSave.Location=New-Object Drawing.Point(20,300); $chkSave.Size=New-Object Drawing.Size(360,24)
 $chkSave.Font=New-Object Drawing.Font('Segoe UI',9); $chkSave.Checked=$true
 $f.Controls.Add($chkSave)
 
 # aviso
 $av = New-Object Windows.Forms.Label
 $av.Text = "Los cupos salen de domingo a jueves cerca de las 5:00 p.m., y solo para el dia habil siguiente." + [Environment]::NewLine + "Abra el programa a las 4:55 p.m. y pulse BUSCAR Y AGENDAR. Deje la ventana abierta."
-$av.Location=New-Object Drawing.Point(20,306); $av.Size=New-Object Drawing.Size(700,40)
+$av.Location=New-Object Drawing.Point(20,328); $av.Size=New-Object Drawing.Size(700,40)
 $av.Font=New-Object Drawing.Font('Segoe UI',9); $av.ForeColor=[Drawing.Color]::FromArgb(150,80,0)
 $f.Controls.Add($av)
 
 # boton principal
 $btnGo = New-Object Windows.Forms.Button
 $btnGo.Text='BUSCAR Y AGENDAR'
-$btnGo.Location=New-Object Drawing.Point(20,352); $btnGo.Size=New-Object Drawing.Size(480,46)
+$btnGo.Location=New-Object Drawing.Point(20,374); $btnGo.Size=New-Object Drawing.Size(480,46)
 $btnGo.Font=New-Object Drawing.Font('Segoe UI',12,[Drawing.FontStyle]::Bold)
 $btnGo.BackColor=[Drawing.Color]::FromArgb(16,124,16); $btnGo.ForeColor=[Drawing.Color]::White
 $btnGo.FlatStyle='Flat'
@@ -129,7 +140,7 @@ $f.Controls.Add($btnGo)
 
 $btnStop = New-Object Windows.Forms.Button
 $btnStop.Text='DETENER'
-$btnStop.Location=New-Object Drawing.Point(510,352); $btnStop.Size=New-Object Drawing.Size(210,46)
+$btnStop.Location=New-Object Drawing.Point(510,374); $btnStop.Size=New-Object Drawing.Size(210,46)
 $btnStop.Font=New-Object Drawing.Font('Segoe UI',11,[Drawing.FontStyle]::Bold)
 $btnStop.Enabled=$false; $btnStop.FlatStyle='Flat'
 $f.Controls.Add($btnStop)
@@ -137,19 +148,19 @@ $f.Controls.Add($btnStop)
 # estado
 $status = New-Object Windows.Forms.Label
 $status.Text='Listo.'
-$status.Location=New-Object Drawing.Point(20,408); $status.Size=New-Object Drawing.Size(700,30)
+$status.Location=New-Object Drawing.Point(20,430); $status.Size=New-Object Drawing.Size(700,30)
 $status.Font=New-Object Drawing.Font('Segoe UI',11,[Drawing.FontStyle]::Bold)
 $f.Controls.Add($status)
 
 $log = New-Object Windows.Forms.TextBox
-$log.Location=New-Object Drawing.Point(20,444); $log.Size=New-Object Drawing.Size(700,150)
+$log.Location=New-Object Drawing.Point(20,466); $log.Size=New-Object Drawing.Size(700,130)
 $log.Multiline=$true; $log.ScrollBars='Vertical'; $log.ReadOnly=$true
 $log.Font=New-Object Drawing.Font('Consolas',9)
 $log.BackColor=[Drawing.Color]::FromArgb(248,248,250)
 $f.Controls.Add($log)
 
 # ---------------- logica ----------------
-$script:sess=$null; $script:tries=0; $script:running=$false
+$script:sess=$null; $script:tries=0; $script:running=$false; $script:stopAt=$null
 
 function Log([string]$m){
   $line = "[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $m
@@ -157,6 +168,17 @@ function Log([string]$m){
   try { Add-Content -Path $logPath -Value $line -Encoding UTF8 } catch {}
 }
 function SetStatus([string]$m,[Drawing.Color]$c){ $status.Text=$m; $status.ForeColor=$c; $f.Refresh() }
+function NoAccent([string]$s){
+  if (-not $s) { return '' }
+  $n = $s.Normalize([Text.NormalizationForm]::FormD)
+  $out = New-Object Text.StringBuilder
+  foreach ($ch in $n.ToCharArray()) {
+    if ([Globalization.CharUnicodeInfo]::GetUnicodeCategory($ch) -ne [Globalization.UnicodeCategory]::NonSpacingMark) {
+      [void]$out.Append($ch)
+    }
+  }
+  return $out.ToString().ToUpper()
+}
 function ErrBody($e){ try{ $s=$e.Exception.Response.GetResponseStream(); $r=New-Object IO.StreamReader($s); $t=$r.ReadToEnd(); $r.Close(); return ($t|ConvertFrom-Json) }catch{ return $null } }
 
 function LoadClients {
@@ -230,6 +252,13 @@ $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 2000
 $timer.Add_Tick({
   if (-not $script:running) { return }
+  if ($script:stopAt -and (Get-Date) -gt $script:stopAt) {
+    $script:running=$false; $timer.Stop(); $btnGo.Enabled=$true; $btnStop.Enabled=$false
+    SetStatus 'Se detuvo: no aparecieron cupos hoy.' ([Drawing.Color]::FromArgb(200,120,0))
+    Log 'Fin de la busqueda. No hubo cupos.'
+    [Windows.Forms.MessageBox]::Show("No aparecieron cupos hoy.`n`nIntente manana. Abra el programa a las 4:55 p.m.`nLos cupos salen de domingo a jueves.",'Sin cupos','OK','Information')|Out-Null
+    return
+  }
   $script:tries++
   $sedeId = $SEDES[[string]$cboSede.SelectedItem]
   $tramId = $TRAMITES[[string]$cboTram.SelectedItem]
@@ -298,7 +327,7 @@ $btnGo.Add_Click({
   try {
     $mc = Invoke-RestMethod -Uri "$BASE/api/mis-citas" -WebSession $script:sess -UserAgent $UA -TimeoutSec 15
     $hoy = (Get-Date).ToString('yyyy-MM-dd')
-    $ya = $mc.data | Where-Object { $_.estado -eq 'AGENDADA' -and ([string]$_.fecha_cita).Substring(0,10) -ge $hoy -and $_.tramite -eq $cboTram.SelectedItem } | Select-Object -First 1
+    $ya = $mc.data | Where-Object { $_.estado -eq 'AGENDADA' -and ([string]$_.fecha_cita).Substring(0,10) -ge $hoy -and (NoAccent $_.tramite) -eq (NoAccent ([string]$cboTram.SelectedItem)) } | Select-Object -First 1
     if ($ya) {
       $btnGo.Enabled=$true
       SetStatus 'Este titular ya tiene cita' ([Drawing.Color]::FromArgb(16,124,16))
@@ -306,6 +335,17 @@ $btnGo.Add_Click({
       return
     }
   } catch {}
+  $script:stopAt = $null
+  try {
+    $hm = $txtStop.Text.Trim()
+    if ($hm) {
+      $d = [datetime]::ParseExact((Get-Date -Format 'yyyy-MM-dd') + ' ' + $hm, 'yyyy-MM-dd HH:mm', $null)
+      if ($d -lt (Get-Date)) { $d = $d.AddDays(1) }
+      $script:stopAt = $d
+      Log ('Se detendra automaticamente a las ' + $d.ToString('HH:mm'))
+    }
+  } catch { Log 'Hora de parada invalida; se usara 17:15.'
+            $script:stopAt = [datetime]::ParseExact((Get-Date -Format 'yyyy-MM-dd') + ' 17:15','yyyy-MM-dd HH:mm',$null) }
   $script:tries=0; $script:running=$true
   $btnStop.Enabled=$true
   Log ('Buscando: ' + $cboTram.SelectedItem + ' en ' + $cboSede.SelectedItem)
