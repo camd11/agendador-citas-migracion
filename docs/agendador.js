@@ -8,7 +8,7 @@
  */
 (function () {
   'use strict';
-  var VERSION = '2.0.0';
+  var VERSION = '2.0.1';
   var SITEKEY = '0x4AAAAAAF0_ravvCrdYLiwp';   // clave publica del portal (pagina /agendar)
   var BASE = '/citas';
   var N_WIDGETS = 3;          // tres verificaciones = tres intentos de reserva
@@ -296,7 +296,7 @@
   function tick() {
     if (!st.running) return;
     if (st.stopAt && now() > st.stopAt) {
-      stop('Se detuvo: no aparecieron cupos hoy.', '#c60');
+      stop('Se detuvo: no se consiguio cupo hoy. Intente el proximo dia a las 4:50 p.m.', '#c60');
       log('Fin de la busqueda. No hubo cupos.');
       return;
     }
@@ -314,7 +314,7 @@
     api('/api/disponibilidad/dias?sede=' + sedeId + '&tramite=' + tramId).then(function (r) {
       var dias = (r.json && r.json.data) || [];
       if (!dias.length) {
-        if (freshTokens().length) status('Buscando cupos... intento ' + st.tries, '#555');
+        if (freshTokens().length) status('Sin cupos por ahora (intento ' + st.tries + '). Salen cerca de las 5:00 p.m.', '#555');
         if (st.tries % 60 === 0) log('sin cupos (intento ' + st.tries + ')');
         return;
       }
@@ -342,11 +342,25 @@
       }
       st.stopAt = null;
       var m = /^(\d{1,2}):(\d{2})$/.exec($('ag2-stop').value.trim());
-      if (m) {
-        var d = new Date(); d.setHours(+m[1], +m[2], 0, 0);
-        if (d < new Date()) d.setDate(d.getDate() + 1);
-        st.stopAt = d; log('Se detendra automaticamente a las ' + m[1] + ':' + m[2]);
+      if (!m) m = [null, '17', '15'];
+      var d = new Date(); d.setHours(+m[1], +m[2], 0, 0);
+      if (d < new Date()) {
+        // Ya paso la hora de parada de hoy: los cupos de hoy ya salieron.
+        $('ag2-go').disabled = false;
+        status('Ya paso la hora de los cupos de hoy. Vuelva el proximo dia a las 4:50 p.m.', '#c60');
+        log('No se inicio: ya son mas de las ' + m[1] + ':' + m[2] + '.');
+        alert('YA PASO LA HORA DE LOS CUPOS DE HOY\n\n' +
+          'Los cupos salen de domingo a jueves cerca de las 5:00 p.m. y en Medellin se acaban en menos de un minuto.\n\n' +
+          'Vuelva el proximo dia de domingo a jueves:\n' +
+          '  4:50 p.m.  inicie sesion\n  4:55 p.m.  pulse BUSCAR Y AGENDAR\n  4:58 p.m.  marque las 3 casillas');
+        return;
       }
+      var early = new Date(); early.setHours(16, 30, 0, 0);
+      if (new Date() < early && !confirm('Todavia es temprano. Los cupos salen cerca de las 5:00 p.m.\n\n' +
+          'Lo mejor es pulsar BUSCAR Y AGENDAR a las 4:55 p.m.\n\nPulse Aceptar para buscar desde ya, o Cancelar para esperar.')) {
+        $('ag2-go').disabled = false; status('Listo. Pulse BUSCAR Y AGENDAR a las 4:55 p.m.', '#555'); return;
+      }
+      st.stopAt = d; log('Se detendra automaticamente a las ' + m[1] + ':' + m[2]);
       st.running = true; st.tries = 0;
       $('ag2-stopbtn').disabled = false;
       log('Buscando: ' + tramName + ' en ' + $('ag2-sede').selectedOptions[0].textContent);
