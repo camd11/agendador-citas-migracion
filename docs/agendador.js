@@ -8,8 +8,9 @@
  */
 (function () {
   'use strict';
-  var VERSION = '2.0.1';
+  var VERSION = '2.0.2';
   var SITEKEY = '0x4AAAAAAF0_ravvCrdYLiwp';   // clave publica del portal (pagina /agendar)
+  var ACTION = 'appointment_booking';         // la misma accion que usa el portal; el servidor la exige
   var BASE = '/citas';
   var N_WIDGETS = 3;          // tres verificaciones = tres intentos de reserva
   var TOKEN_LIFE_MS = 280000; // Cloudflare: el token vale 300 s; usamos 280 s
@@ -176,7 +177,7 @@
       (function () {
         var d = document.createElement('div'); d.style.margin = '4px 0'; host.appendChild(d);
         var wid = window.turnstile.render(d, {
-          sitekey: SITEKEY, language: 'es', theme: 'light', size: 'normal',
+          sitekey: SITEKEY, action: ACTION, language: 'es', theme: 'light', size: 'normal',
           'refresh-expired': 'manual',
           callback: function (tok) {
             st.tokens = st.tokens.filter(function (x) { return x.wid !== wid; });
