@@ -32,7 +32,7 @@
 <body>
 <header>
   <h1>Agendador de Citas — Migración Colombia</h1>
-  <p>Versión 2.0 · noviembre de 2026 · funciona en el navegador Chrome o Edge, en un computador</p>
+  <p>Versión 2.1 · noviembre de 2026 · funciona en el navegador Chrome o Edge, en un computador</p>
 </header>
 
 <div class="box warn">
@@ -81,18 +81,20 @@ Solo comprueba que el portal acepta la casilla de seguridad.</div>
       e <b>inicie sesión</b> con el correo y la contraseña del titular, como siempre.</li>
   <li>Si aparece el aviso «ATENCIÓN», pulse <b>Aceptar</b>.</li>
   <li>Pulse el botón <b>📅 Agendador</b> de la barra de favoritos.
-      A la derecha se abre un panel azul que dice <b>«Agendador de Citas»</b> y el nombre del titular.</li>
+      A la derecha se abre un panel azul que dice <b>«Agendador de Citas»</b> y el nombre del titular.
+      <b>Arriba del panel hay un recuadro de color que siempre le dice qué hacer ahora.</b></li>
   <li>Elija el <b>Trámite</b> y la <b>Sede</b>.</li>
-  <li>Marque <b>una</b> casilla <b>«Verifique que es un ser humano»</b>. Espere el chulo verde ✓.
-      A veces el chulo aparece solo, sin hacer clic. Eso también está bien.</li>
+  <li>Marque <b>una</b> casilla <b>«Verifique que es un ser humano»</b>. Espere a que debajo de la casilla diga
+      <b style="color:#107c10">«✓ Lista»</b>. A veces se marca sola, sin hacer clic. Eso también está bien.</li>
   <li>Pulse <b>PROBAR (no agenda nada)</b>.</li>
 </ol>
 <table>
   <tr><th>El programa dice</th><th>Qué significa</th></tr>
   <tr><td><b style="color:#107c10">PRUEBA CORRECTA</b></td><td>Todo funciona. Está lista para el día de la cita.</td></tr>
-  <tr><td><b style="color:#b00">PRUEBA FALLIDA</b></td><td>El portal no aceptó la casilla. Tome una foto de la pantalla
-      (con el panel y su registro) y envíela a quien le mandó este enlace.</td></tr>
-  <tr><td>«No hay sesión iniciada»</td><td>Inicie sesión en la página de Migración y pulse 📅 Agendador otra vez.</td></tr>
+  <tr><td><b style="color:#b00">PRUEBA FALLIDA</b></td><td>El portal no aceptó la casilla. Pulse <b>Copiar registro</b>
+      (abajo del panel), pegue el texto en un mensaje y envíelo a quien le mandó este enlace. También sirve una foto de la pantalla.</td></tr>
+  <tr><td>«No hay sesión iniciada» o «La sesión se cerró»</td><td>Pulse <kbd>F5</kbd>, inicie sesión en la página de Migración y pulse 📅 Agendador otra vez.</td></tr>
+  <tr><td>«Falta la verificación»</td><td>Marque una casilla y espere «✓ Lista» antes de pulsar PROBAR.</td></tr>
 </table>
 
 <h2>Paso 3 — El día de la cita</h2>
@@ -108,16 +110,18 @@ Solo comprueba que el portal acepta la casilla de seguridad.</div>
   <tr><td><b>4:53 p.&nbsp;m.</b></td><td>Pulse <b>📅 Agendador</b>. Revise el nombre del titular, el <b>Trámite</b> y la <b>Sede</b>.</td></tr>
   <tr><td><b>4:55 p.&nbsp;m.</b></td><td>Pulse <b>BUSCAR Y AGENDAR</b>. El programa empieza a buscar.</td></tr>
   <tr><td><b>4:58 p.&nbsp;m.</b></td><td>Marque las <b>3 casillas</b> «Verifique que es un ser humano». Espere los 3 chulos verdes.
-      El panel debe decir <b>«Verificaciones listas: 3 de 3»</b>.</td></tr>
+      Debajo de cada casilla debe decir <b>«✓ Lista»</b>, y el recuadro de arriba debe decir <b>«Todo listo»</b>.</td></tr>
   <tr><td><b>4:58 a 5:15</b></td><td><b>No toque nada más.</b> Deje la página <b>visible y al frente</b>.
       No minimice la ventana y no deje que el computador se suspenda.</td></tr>
 </table>
 <ul>
-  <li>Cada casilla vale <b>5 minutos</b> y sirve para <b>un</b> intento. Si suena una <b>alarma doble</b> o el panel dice
-      <b>«MARQUE LAS CASILLAS»</b>, marque otra vez las casillas que estén vacías.</li>
+  <li>Cada casilla vale <b>5 minutos</b> y sirve para <b>un</b> intento. Debajo de cada casilla se ve cuánto tiempo le queda.
+      Si suena una <b>alarma doble</b> o el recuadro de arriba dice en rojo <b>«MARQUE LAS CASILLAS»</b>, marque otra vez las casillas que estén vacías.</li>
   <li>Cuando consigue la cita, suenan <b>varios pitidos</b> y aparece <b>«CITA AGENDADA»</b> con la fecha, la hora y el
       <b>radicado</b>. Tome una foto o anote el radicado. Migración también envía un correo de confirmación.</li>
-  <li>Si a las 5:15 no hubo cupos, el programa se detiene solo. Intente el siguiente día hábil.</li>
+  <li>Si a las 5:15 no hubo cupos, el programa se detiene solo y le dice si aparecieron cupos y se agotaron, o si no aparecieron.
+      Intente el siguiente día de domingo a jueves.</li>
+  <li>Si pulsa BUSCAR Y AGENDAR un viernes, un sábado o después de las 5:15, el programa le explica que a esa hora no salen cupos y no empieza.</li>
 </ul>
 
 <h2>Preguntas frecuentes</h2>
@@ -138,7 +142,7 @@ Solo comprueba que el portal acepta la casilla de seguridad.</div>
 <p>Agendar una cita es <b>gratis</b> y no necesita intermediarios. Este programa solo hace la espera por usted: no da prioridad,
 no salta la fila y no crea cupos. Úselo para su propia cita o la de una persona que usted representa.
 No hay ninguna relación con Migración Colombia. Se entrega sin garantía.</p>
-<p class="small">Versión 2.0.2 · <a href="https://github.com/camd11/agendador-citas-migracion">código fuente</a></p>
+<p class="small">Versión 2.1.0 · <a href="https://github.com/camd11/agendador-citas-migracion">código fuente</a></p>
 
 <script>
   document.getElementById('code').value = document.querySelector('a.bm').getAttribute('href');

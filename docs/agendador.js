@@ -8,7 +8,7 @@
  */
 (function () {
   'use strict';
-  var VERSION = '2.0.2';
+  var VERSION = '2.1.0';
   var SITEKEY = '0x4AAAAAAF0_ravvCrdYLiwp';   // clave publica del portal (pagina /agendar)
   var ACTION = 'appointment_booking';         // la misma accion que usa el portal; el servidor la exige
   var BASE = '/citas';
@@ -17,9 +17,10 @@
   var POLL_MS = 1000;
   var REQ_TIMEOUT_MS = 6000;
   var BOOK_TIMEOUT_MS = 25000;
+  var DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
 
   if (location.host !== 'apps.migracioncolombia.gov.co' || location.pathname.indexOf(BASE) !== 0) {
-    alert('Abra primero https://apps.migracioncolombia.gov.co/citas/agendar, inicie sesion con la cuenta del titular y vuelva a pulsar el marcador.');
+    alert('Este boton solo funciona en la pagina de citas de Migracion.\n\nSe abrira ahora. Inicie sesion con la cuenta del titular y pulse el boton Agendador otra vez.');
     location.href = 'https://apps.migracioncolombia.gov.co/citas/agendar';
     return;
   }
@@ -29,21 +30,42 @@
   var st = {
     running: false, busy: false, busySince: 0, tries: 0, stopAt: null,
     tokens: [],          // {tok, t, wid}
-    widgets: [],         // ids de turnstile
-    done: false, timer: null, lastNeedAlarm: 0
+    wstate: {},          // wid -> {state:'pendiente'|'lista'|'error', code, label}
+    widgets: [],
+    session: 'checking', // 'checking' | 'ok' | 'none'
+    who: '',
+    done: false, timer: null, lastNeedAlarm: 0, netFails: 0,
+    sawSlotsAt: null, bookFails: 0, ttLoaded: false
   };
 
   // ---------------- utilidades ----------------
   function $(id) { return document.getElementById(id); }
   function now() { return new Date(); }
   function hhmmss(d) { return d.toTimeString().slice(0, 8); }
+  function localDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function mmss(ms) { var s = Math.max(0, Math.round(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
   function noAccent(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim(); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function log(m) {
     var line = '[' + hhmmss(now()) + '] ' + m;
     var el = $('ag2-log'); if (el) { el.value += line + '\n'; el.scrollTop = el.scrollHeight; }
     try { console.log('[agendador] ' + line); } catch (e) {}
   }
   function status(m, color) { var el = $('ag2-status'); if (el) { el.textContent = m; el.style.color = color || '#333'; } }
+  // Caja de resultado: queda visible hasta que otra la reemplace o se cierre.
+  function showMsg(kind, title, html) {
+    var colors = { ok: ['#eaf6ea', '#107c10'], err: ['#fdecec', '#b00020'], warn: ['#fff4e0', '#b35c00'], info: ['#eef2fb', '#0a2463'] };
+    var c = colors[kind] || colors.info;
+    var el = $('ag2-msg');
+    el.style.display = '';
+    el.style.background = c[0]; el.style.borderColor = c[1];
+    el.innerHTML = '<button class="mx" title="Cerrar">&times;</button><div class="mt" style="color:' + c[1] + '">' + esc(title) + '</div><div>' + html + '</div>';
+    el.querySelector('.mx').onclick = function () { el.style.display = 'none'; };
+    $('ag2-body').style.display = '';
+    try { box.scrollTop = 0; } catch (e) {}
+  }
   function beep(freq, ms, times) {
     try {
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -67,6 +89,13 @@
       });
     }).finally(function () { clearTimeout(to); });
   }
+  function errOf(r) {
+    var j = (r && r.json) || {};
+    return {
+      code: j.code || (j.data && j.data.code) || '',
+      text: j.error || (j.data && j.data.error) || ('HTTP ' + (r && r.status))
+    };
+  }
   function save() {
     try {
       localStorage.setItem('agendador_v2', JSON.stringify({
@@ -75,43 +104,101 @@
     } catch (e) {}
   }
   function loadSaved() { try { return JSON.parse(localStorage.getItem('agendador_v2') || '{}'); } catch (e) { return {}; } }
+  function selText(id) { var s = $(id); return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; }
+  function stopTimeToday() {
+    var m = /^(\d{1,2}):(\d{2})$/.exec(($('ag2-stop').value || '').trim()) || [null, '17', '15'];
+    var d = new Date(); d.setHours(+m[1], +m[2], 0, 0); return d;
+  }
+  function releaseDay(d) { var w = d.getDay(); return w >= 0 && w <= 4; } // domingo a jueves
+  function nextReleaseText(d) {
+    var x = new Date(d); x.setDate(x.getDate() + 1);
+    while (!releaseDay(x)) x.setDate(x.getDate() + 1);
+    var diff = Math.round((new Date(x.getFullYear(), x.getMonth(), x.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
+    return diff === 1 ? 'manana (' + DIAS[x.getDay()] + ')' : 'el ' + DIAS[x.getDay()];
+  }
 
   // ---------------- panel ----------------
-  var css = '#ag2{position:fixed;top:12px;right:12px;width:430px;z-index:2147483647;background:#fff;border:2px solid #0a2463;' +
+  var css = '#ag2{position:fixed;top:10px;right:10px;width:440px;max-height:calc(100vh - 20px);overflow:auto;z-index:2147483647;background:#fff;border:2px solid #0a2463;' +
     'border-radius:10px;box-shadow:0 6px 30px rgba(0,0,0,.35);font:14px Segoe UI,Arial,sans-serif;color:#222}' +
-    '#ag2 h3{margin:0;padding:10px 14px;background:#0a2463;color:#fff;font-size:16px;border-radius:7px 7px 0 0;display:flex;justify-content:space-between}' +
+    '#ag2 h3{margin:0;padding:9px 14px;background:#0a2463;color:#fff;font-size:16px;display:flex;justify-content:space-between;align-items:center}' +
     '#ag2 .b{padding:10px 14px}#ag2 label{display:block;font-weight:600;margin:8px 0 3px}' +
     '#ag2 select,#ag2 input{width:100%;box-sizing:border-box;padding:5px;font-size:14px}' +
     '#ag2 .row{display:flex;gap:8px}#ag2 .row>*{flex:1}' +
     '#ag2 button{padding:10px;font-size:15px;font-weight:700;border:0;border-radius:6px;cursor:pointer}' +
+    '#ag2 button:disabled{opacity:.5;cursor:default}' +
     '#ag2-go{background:#107c10;color:#fff}#ag2-stopbtn{background:#ccc;color:#222}' +
+    '#ag2-next{font-size:15px;font-weight:700;padding:9px 11px;border-radius:7px;border:2px solid;margin-bottom:6px}' +
+    '#ag2-msg{position:relative;border:2px solid;border-radius:7px;padding:9px 30px 9px 11px;margin:8px 0;font-size:14px}' +
+    '#ag2-msg .mt{font-weight:800;font-size:16px;margin-bottom:4px}' +
+    '#ag2-msg .mx{position:absolute;top:2px;right:4px;background:none;font-size:20px;padding:0 6px;color:#555}' +
     '#ag2-status{font-weight:700;margin:8px 0;min-height:20px}' +
-    '#ag2-log{width:100%;height:110px;font:12px Consolas,monospace;background:#f6f6f8}' +
+    '#ag2-log{width:100%;height:100px;font:12px Consolas,monospace;background:#f6f6f8;box-sizing:border-box}' +
     '#ag2-ver{border:2px dashed #c60;border-radius:6px;padding:6px;margin-top:8px;background:#fff8ef}' +
-    '#ag2-ver p{margin:0 0 6px;font-size:13px}#ag2-tokinfo{font-weight:700}' +
-    '#ag2 .x{background:none;color:#fff;font-size:18px;padding:0 4px}';
+    '#ag2-ver p{margin:0 0 6px;font-size:13px}#ag2-tokinfo{font-weight:700;margin-top:4px}' +
+    '#ag2 .wl{font-size:12px;font-weight:700;margin:0 0 6px 2px}' +
+    '#ag2 .x{background:none;color:#fff;font-size:18px;padding:0 4px}' +
+    '@keyframes ag2blink{50%{opacity:.35}}#ag2 .blink{animation:ag2blink 1s step-start infinite}';
   var styleEl = document.createElement('style'); styleEl.textContent = css; document.head.appendChild(styleEl);
   var saved = loadSaved();
   var box = document.createElement('div'); box.id = 'ag2';
   box.innerHTML =
     '<h3><span>Agendador de Citas ' + VERSION + '</span><button class="x" id="ag2-min" title="Minimizar">_</button></h3>' +
     '<div class="b" id="ag2-body">' +
+    '<div id="ag2-next">Cargando...</div>' +
+    '<div id="ag2-msg" style="display:none"></div>' +
     '<div id="ag2-who">Comprobando la sesion...</div>' +
     '<label>Tramite</label><select id="ag2-tram"><option>cargando...</option></select>' +
     '<div class="row"><div><label>Sede</label><select id="ag2-sede"><option>elija el tramite</option></select></div>' +
-    '<div style="flex:0 0 110px"><label>Parar a las</label><input id="ag2-stop" value="' + (saved.stop || '17:15') + '"></div></div>' +
-    '<div id="ag2-ver"><p><b>Verificacion de seguridad.</b> A las 4:58 p.m. marque las ' + N_WIDGETS +
-    ' casillas <i>"Verifique que es un ser humano"</i>. Cada casilla vale 5 minutos y sirve para un intento. ' +
-    'Si suena una alarma doble, vuelva a marcarlas.</p><div id="ag2-tt"></div><div id="ag2-tokinfo">Verificaciones listas: 0</div></div>' +
+    '<div style="flex:0 0 110px"><label>Parar a las</label><input id="ag2-stop" value="' + esc(saved.stop || '17:15') + '"></div></div>' +
+    '<div id="ag2-ver"><p><b>Verificacion de seguridad.</b> Para agendar: a las 4:58 p.m. marque las ' + N_WIDGETS +
+    ' casillas <i>"Verifique que es un ser humano"</i>. Para la prueba basta una. Cada casilla vale 5 minutos y sirve para un intento.</p>' +
+    '<div id="ag2-tt">Cargando la verificacion de Cloudflare...</div><div id="ag2-tokinfo"></div></div>' +
     '<div class="row" style="margin-top:10px"><button id="ag2-go">BUSCAR Y AGENDAR</button>' +
     '<button id="ag2-stopbtn" disabled style="flex:0 0 110px">DETENER</button></div>' +
     '<button id="ag2-test" style="width:100%;margin-top:6px;background:#e8eefc;color:#0a2463">PROBAR (no agenda nada)</button>' +
     '<div id="ag2-status">Listo.</div>' +
     '<textarea id="ag2-log" readonly></textarea>' +
-    '<div style="font-size:12px;color:#666;margin-top:4px">Deje esta pestana <b>visible y al frente</b>. Si la oculta, el navegador la vuelve lenta.</div>' +
+    '<div class="row" style="margin-top:4px;align-items:center"><div style="font-size:12px;color:#666;flex:1">Deje esta pestana <b>visible y al frente</b>.</div>' +
+    '<button id="ag2-copy" style="flex:0 0 150px;font-size:13px;padding:6px;background:#eee;color:#222">Copiar registro</button></div>' +
     '</div>';
   document.body.appendChild(box);
   $('ag2-min').onclick = function () { var b = $('ag2-body'); b.style.display = b.style.display === 'none' ? '' : 'none'; };
+  $('ag2-copy').onclick = function () {
+    var txt = 'Agendador ' + VERSION + ' | ' + new Date().toString() + ' | ' + navigator.userAgent + '\n' +
+      'Titular: ' + st.who + ' | Tramite: ' + selText('ag2-tram') + ' | Sede: ' + selText('ag2-sede') + '\n' + $('ag2-log').value;
+    var done = function () { $('ag2-copy').textContent = 'Copiado ✓'; setTimeout(function () { $('ag2-copy').textContent = 'Copiar registro'; }, 3000); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, function () { fallbackCopy(txt); done(); });
+    else { fallbackCopy(txt); done(); }
+  };
+  function fallbackCopy(txt) {
+    var t = document.createElement('textarea'); t.value = txt; document.body.appendChild(t); t.select();
+    try { document.execCommand('copy'); } catch (e) {} document.body.removeChild(t);
+  }
+
+  // ---------------- "que hacer ahora" ----------------
+  function guide() {
+    var el = $('ag2-next'); if (!el) return;
+    var d = now(), n = freshTokens().length, stopAt = stopTimeToday();
+    var start = new Date(d); start.setHours(16, 50, 0, 0);
+    var g;   // [color, texto, parpadeo]
+    if (st.done) g = ['#107c10', 'CITA AGENDADA. Revise los datos abajo y anote el radicado.'];
+    else if (st.session === 'none') g = ['#b00020', 'Inicie sesion en la pagina de Migracion con la cuenta del titular. Luego pulse el boton Agendador otra vez.', true];
+    else if (st.session === 'checking') g = ['#555', 'Comprobando la sesion...'];
+    else if (st.running && !n) g = ['#b00020', 'MARQUE LAS CASILLAS "Verifique que es un ser humano" AHORA.', true];
+    else if (st.running) {
+      var soon = st.tokens.reduce(function (m, x) { return Math.min(m, TOKEN_LIFE_MS - (Date.now() - x.t)); }, Infinity);
+      g = ['#107c10', 'Todo listo: ' + n + ' de ' + N_WIDGETS + ' verificaciones. No toque nada y deje esta pagina al frente.' +
+        (soon < 60000 ? ' Una verificacion vence en ' + mmss(soon) + '.' : '')];
+    }
+    else if (!releaseDay(d)) g = ['#0a2463', 'Hoy es ' + DIAS[d.getDay()] + ': hoy no salen cupos (salen de domingo a jueves). Puede hacer la PRUEBA. Para agendar, vuelva ' + nextReleaseText(d) + ' a las 4:50 p.m.'];
+    else if (d > stopAt) g = ['#b35c00', 'Los cupos de hoy ya salieron (cerca de las 5:00 p.m.). Puede hacer la PRUEBA. Para agendar, vuelva ' + nextReleaseText(d) + ' a las 4:50 p.m.'];
+    else if (d < start) g = ['#0a2463', 'Ahora puede hacer la PRUEBA. Para agendar, vuelva hoy a las 4:50 p.m. (faltan ' + mmss(start - d).replace(/:\d+$/, '') + ' minutos).'];
+    else g = ['#107c10', 'Es la hora: pulse BUSCAR Y AGENDAR y, a las 4:58, marque las ' + N_WIDGETS + ' casillas.', true];
+    el.textContent = g[1];
+    el.style.color = g[0]; el.style.borderColor = g[0];
+    el.style.background = g[0] === '#b00020' ? '#fdecec' : g[0] === '#107c10' ? '#eaf6ea' : g[0] === '#b35c00' ? '#fff4e0' : '#eef2fb';
+    el.className = g[2] ? 'blink' : '';
+  }
 
   // ---------------- datos iniciales ----------------
   function loadSedes(tramId, selectName) {
@@ -127,16 +214,36 @@
       for (var i = 0; i < sel.options.length; i++) {
         if (sel.options[i].value === String(want) || noAccent(sel.options[i].textContent) === noAccent(want)) { sel.selectedIndex = i; break; }
       }
-    }).catch(function () { sel.innerHTML = '<option value="">error al cargar sedes</option>'; });
+    }).catch(function () {
+      sel.innerHTML = '<option value="">error al cargar sedes</option>';
+      showMsg('err', 'No se pudieron cargar las sedes', 'Revise la conexion a internet y pulse F5 para recargar la pagina. Luego pulse el boton Agendador otra vez.');
+    });
   }
-  api('/api/auth/me').then(function (r) {
-    if (r.status === 401 || !r.ok) {
-      $('ag2-who').innerHTML = '<b style="color:#b00">No hay sesion iniciada.</b> Inicie sesion con la cuenta del titular y pulse el marcador otra vez.';
-      return;
-    }
-    var d = (r.json && r.json.data) || {};
-    $('ag2-who').innerHTML = 'Titular: <b>' + [d.primer_nombre, d.primer_apellido].filter(Boolean).join(' ') + '</b>';
-  }).catch(function () { $('ag2-who').textContent = 'No se pudo comprobar la sesion.'; });
+  function checkSession(quiet) {
+    return api('/api/auth/me').then(function (r) {
+      if (r.status === 401 || !r.ok) {
+        var was = st.session;
+        st.session = 'none';
+        $('ag2-who').innerHTML = '<b style="color:#b00020">No hay sesion iniciada.</b>';
+        if (was === 'ok') {
+          log('La sesion del portal se cerro.');
+          showMsg('err', 'La sesion se cerro', 'El portal cerro la sesion. Pulse F5, inicie sesion otra vez con la cuenta del titular y pulse el boton Agendador.');
+          if (st.running) { stop('Detenido: la sesion se cerro.', '#b00020'); beep(400, 400, 3); }
+        }
+        return false;
+      }
+      var d = (r.json && r.json.data) || {};
+      st.who = [d.primer_nombre, d.primer_apellido].filter(Boolean).join(' ');
+      st.session = 'ok';
+      $('ag2-who').innerHTML = 'Titular: <b>' + esc(st.who) + '</b> <span style="color:#107c10">(sesion activa)</span>';
+      return true;
+    }).catch(function () {
+      if (!quiet) $('ag2-who').textContent = 'No se pudo comprobar la sesion (problema de conexion).';
+      return null;
+    });
+  }
+  checkSession();
+  setInterval(function () { if (!st.busy) checkSession(true); }, 120000);
   api('/api/tramites').then(function (r) {
     var list = (r.json && r.json.data) || [];
     var sel = $('ag2-tram'); sel.innerHTML = '';
@@ -147,19 +254,60 @@
     sel.onchange = function () { loadSedes(sel.value); save(); };
     $('ag2-sede').onchange = save; $('ag2-stop').onchange = save;
     return loadSedes(sel.value, saved.sede);
+  }).catch(function () {
+    showMsg('err', 'No se pudieron cargar los tramites', 'Revise la conexion a internet y pulse F5 para recargar la pagina. Luego pulse el boton Agendador otra vez.');
   });
 
   // ---------------- Turnstile ----------------
+  var TT_ERRORS = {
+    '1': 'error interno de Cloudflare', '100': 'problema al iniciar la verificacion', '102': 'parametros invalidos',
+    '103': 'parametros invalidos', '104': 'parametros invalidos', '106': 'parametros invalidos',
+    '105': 'version de Cloudflare desactualizada', '110100': 'clave del sitio no valida', '110110': 'clave del sitio no valida',
+    '110200': 'dominio no autorizado', '110420': 'accion no valida', '110500': 'navegador no compatible',
+    '110510': 'navegador con comportamiento inusual', '200010': 'datos guardados del navegador invalidos',
+    '200100': 'la hora del computador esta mal', '300': 'Cloudflare no pudo confirmar que es una persona',
+    '600': 'Cloudflare no pudo confirmar que es una persona'
+  };
+  function ttErrorText(code) {
+    var c = String(code || '');
+    var k = TT_ERRORS[c] || TT_ERRORS[c.slice(0, 3)] || TT_ERRORS[c.charAt(0)] || 'error desconocido';
+    return k + (c ? ' (codigo ' + c + ')' : '');
+  }
   function freshTokens() {
     var t = Date.now();
+    var before = st.tokens.length;
     st.tokens = st.tokens.filter(function (x) { return t - x.t < TOKEN_LIFE_MS; });
+    if (st.tokens.length < before) {
+      Object.keys(st.wstate).forEach(function (w) {
+        if (st.wstate[w].state === 'lista' && !st.tokens.some(function (x) { return String(x.wid) === w; })) {
+          st.wstate[w].state = 'pendiente';
+          try { window.turnstile.reset(w); } catch (e) {}
+        }
+      });
+    }
     return st.tokens;
   }
   function showTokens() {
     var n = freshTokens().length;
-    var el = $('ag2-tokinfo');
+    var el = $('ag2-tokinfo'); if (!el) return;
     el.textContent = 'Verificaciones listas: ' + n + ' de ' + N_WIDGETS;
-    el.style.color = n ? '#107c10' : '#b00';
+    el.style.color = n ? '#107c10' : '#b00020';
+    Object.keys(st.wstate).forEach(function (w) {
+      var s = st.wstate[w], lbl = s.label;
+      if (!lbl) return;
+      if (s.state === 'lista') {
+        var x = st.tokens.filter(function (y) { return String(y.wid) === w; })[0];
+        var left = x ? TOKEN_LIFE_MS - (Date.now() - x.t) : 0;
+        lbl.textContent = '✓ Lista. Vence en ' + mmss(left) + '.';
+        lbl.style.color = left < 60000 ? '#b35c00' : '#107c10';
+      } else if (s.state === 'error') {
+        lbl.textContent = '✗ Error: ' + ttErrorText(s.code) + '. Se reintenta sola; si sigue igual, pulse F5.';
+        lbl.style.color = '#b00020';
+      } else {
+        lbl.textContent = 'Pendiente: marque esta casilla.';
+        lbl.style.color = '#666';
+      }
+    });
   }
   function takeToken() {
     var list = freshTokens();
@@ -167,35 +315,51 @@
     list.sort(function (a, b) { return a.t - b.t; });   // primero la mas antigua
     var x = list.shift();
     st.tokens = list;
+    if (st.wstate[x.wid]) st.wstate[x.wid].state = 'pendiente';
     try { window.turnstile.reset(x.wid); } catch (e) {}   // el token es de un solo uso
     showTokens();
     return x.tok;
   }
   function renderWidgets() {
-    var host = $('ag2-tt');
+    var host = $('ag2-tt'); host.innerHTML = '';
     for (var i = 0; i < N_WIDGETS; i++) {
-      (function () {
-        var d = document.createElement('div'); d.style.margin = '4px 0'; host.appendChild(d);
+      (function (num) {
+        var d = document.createElement('div'); d.style.margin = '4px 0 0'; host.appendChild(d);
+        var lbl = document.createElement('div'); lbl.className = 'wl'; host.appendChild(lbl);
         var wid = window.turnstile.render(d, {
           sitekey: SITEKEY, action: ACTION, language: 'es', theme: 'light', size: 'normal',
           'refresh-expired': 'manual',
           callback: function (tok) {
             st.tokens = st.tokens.filter(function (x) { return x.wid !== wid; });
             st.tokens.push({ tok: tok, t: Date.now(), wid: wid });
-            showTokens(); log('Verificacion lista (' + freshTokens().length + ').');
+            st.wstate[wid].state = 'lista';
+            showTokens(); log('Casilla ' + num + ': verificacion lista.');
           },
           'expired-callback': function () {
             st.tokens = st.tokens.filter(function (x) { return x.wid !== wid; });
+            st.wstate[wid].state = 'pendiente';
+            log('Casilla ' + num + ': la verificacion vencio; hay que marcarla otra vez.');
             showTokens();
             try { window.turnstile.reset(wid); } catch (e) {}
           },
-          'error-callback': function () { log('Cloudflare dio un error en una casilla; se reinicia.'); try { window.turnstile.reset(wid); } catch (e) {} }
+          'error-callback': function (code) {
+            st.wstate[wid].state = 'error'; st.wstate[wid].code = code;
+            log('Casilla ' + num + ': Cloudflare dio un error: ' + ttErrorText(code) + '.');
+            showTokens();
+            setTimeout(function () { try { window.turnstile.reset(wid); } catch (e) {} }, 3000);
+            return true;   // el error ya se maneja aqui
+          },
+          'unsupported-callback': function () {
+            showMsg('err', 'Navegador no compatible', 'Cloudflare no funciona en este navegador. Use Google Chrome o Microsoft Edge actualizados, en un computador.');
+          }
         });
+        st.wstate[wid] = { state: 'pendiente', label: lbl };
         st.widgets.push(wid);
-      })();
+      })(i + 1);
     }
+    st.ttLoaded = true;
     showTokens();
-    setInterval(showTokens, 5000);
+    setInterval(showTokens, 1000);
   }
   function loadTurnstile() {
     if (window.turnstile && window.turnstile.render) { renderWidgets(); return; }
@@ -205,7 +369,11 @@
     s.onload = function () {
       var w = setInterval(function () { if (window.turnstile && window.turnstile.render) { clearInterval(w); renderWidgets(); } }, 100);
     };
-    s.onerror = function () { log('ERROR: no se pudo cargar la verificacion de Cloudflare.'); };
+    s.onerror = function () {
+      log('ERROR: no se pudo cargar la verificacion de Cloudflare.');
+      $('ag2-tt').textContent = 'No se pudo cargar la verificacion de Cloudflare.';
+      showMsg('err', 'No cargo la verificacion de seguridad', 'Revise la conexion a internet. Si usa un bloqueador de anuncios, desactivelo en esta pagina. Luego pulse F5 y el boton Agendador otra vez.');
+    };
     document.head.appendChild(s);
   }
   loadTurnstile();
@@ -213,25 +381,27 @@
   // ---------------- busqueda y reserva ----------------
   function stop(msg, color) {
     st.running = false; clearInterval(st.timer); st.timer = null;
-    $('ag2-go').disabled = false; $('ag2-stopbtn').disabled = true;
+    $('ag2-go').disabled = false; $('ag2-stopbtn').disabled = true; $('ag2-test').disabled = false;
     if (msg) status(msg, color);
+    guide();
   }
-  function success(fecha, slot, info) {
+  function success(fecha, hora, info) {
     st.done = true; stop('CITA AGENDADA', '#107c10');
     beep(1200, 180, 6);
-    var msg = 'CITA AGENDADA\n\nFecha: ' + fecha + '\nHora: ' + (slot.hora_inicio || '?') +
-      '\nSede: ' + $('ag2-sede').selectedOptions[0].textContent +
-      '\nTramite: ' + $('ag2-tram').selectedOptions[0].textContent +
-      (info && info.radicado ? '\nRadicado: ' + info.radicado : '') +
-      (info && info.direccion ? '\n' + info.direccion : '') +
-      '\n\nLleve el pasaporte y los ORIGINALES de todos los soportes.';
-    log('AGENDADA ' + fecha + ' ' + (slot.hora_inicio || '') + (info && info.radicado ? ' radicado ' + info.radicado : ''));
-    setTimeout(function () { alert(msg); }, 50);
+    var rows = [['Fecha', fecha], ['Hora', hora || '?'], ['Sede', (info && info.sede) || selText('ag2-sede')],
+      ['Tramite', selText('ag2-tram')], ['Radicado', info && info.radicado], ['Direccion', info && info.direccion]];
+    showMsg('ok', 'CITA AGENDADA', rows.filter(function (x) { return x[1]; }).map(function (x) {
+      return '<b>' + x[0] + ':</b> ' + esc(x[1]);
+    }).join('<br>') + '<br><br>Tome una foto de esta pantalla o anote el radicado. Migracion envia un correo de confirmacion.<br>' +
+      'Lleve el pasaporte y los ORIGINALES de todos los soportes.');
+    log('AGENDADA ' + fecha + ' ' + (hora || '') + (info && info.radicado ? ' radicado ' + info.radicado : ''));
+    setTimeout(function () { alert('CITA AGENDADA\n\nFecha: ' + fecha + '\nHora: ' + (hora || '?') + (info && info.radicado ? '\nRadicado: ' + info.radicado : '')); }, 50);
   }
   function findActive(tramName) {
     return api('/api/mis-citas', {}, 15000).then(function (r) {
+      if (r.status === 401) throw new Error('sin sesion');
       var list = (r.json && r.json.data) || [];
-      var hoy = new Date().toISOString().slice(0, 10);
+      var hoy = localDate(new Date());
       return list.filter(function (c) {
         return c.estado === 'AGENDADA' && String(c.fecha_cita || '').slice(0, 10) >= hoy &&
           (!tramName || noAccent(c.tramite) === noAccent(tramName));
@@ -240,26 +410,28 @@
   }
   function book(sedeId, tramId, fecha, slot) {
     var tok = takeToken();
-    if (!tok) { log('  sin verificacion lista para ' + (slot.hora_inicio || slot.id_hora_fk)); return Promise.resolve('NOTOKEN'); }
+    var h = slot.hora_inicio || slot.id_hora_fk;
+    if (!tok) { log('  ' + h + ': no hay verificacion lista para intentar.'); return Promise.resolve('NOTOKEN'); }
+    log('  Intentando ' + fecha + ' ' + h + '...');
     var body = JSON.stringify({ sedeId: sedeId, tramiteId: tramId, fecha: fecha, horaId: slot.id_hora_fk, turnstileToken: tok });
     return api('/api/citas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body }, BOOK_TIMEOUT_MS)
       .then(function (r) {
         if (r.ok && r.json && r.json.ok !== false) return 'OK';
-        var j = r.json || {};
-        var code = j.code || (j.data && j.data.code) || '';
-        var err = j.error || (j.data && j.data.error) || ('HTTP ' + r.status);
+        var e = errOf(r);
         if (r.status === 401) return 'AUTH';
-        if (code === 'CITA_ACTIVA') return 'ACTIVA';
-        log('  fallo ' + (slot.hora_inicio || slot.id_hora_fk) + ' -> ' + err + (code ? ' (' + code + ')' : ''));
+        if (e.code === 'CITA_ACTIVA') return 'ACTIVA';
+        st.bookFails++;
+        var why = e.code === 'CAPTCHA_INVALID' ? 'el portal no acepto la verificacion; se usa otra' : e.text;
+        log('  ' + h + ': no se pudo (' + why + (e.code && e.code !== 'CAPTCHA_INVALID' ? ', ' + e.code : '') + ').');
         return 'FAIL';
-      }, function (e) {
+      }, function (err) {
         // Un tiempo agotado NO significa que no se agendo: se confirma con mis-citas.
-        log('  sin respuesta al reservar (' + (e && e.name) + '); se confirma en Mis citas...');
+        log('  ' + h + ': el portal no respondio a tiempo; se revisa en Mis citas...');
         return 'TIMEOUT';
       });
   }
   function attempt(sedeId, tramId, dias) {
-    var tramName = $('ag2-tram').selectedOptions[0].textContent;
+    var tramName = selText('ag2-tram');
     var chain = Promise.resolve(null);
     dias.forEach(function (d) {
       var fecha = (typeof d === 'string' ? d : String(d.fecha || '')).slice(0, 10);
@@ -268,7 +440,7 @@
         if (res) return res;
         return api('/api/disponibilidad/slots?sede=' + sedeId + '&tramite=' + tramId + '&fecha=' + fecha).then(function (r) {
           var slots = (r.json && r.json.data) || (Array.isArray(r.json) ? r.json : []);
-          log('  ' + fecha + ' -> ' + slots.length + ' horario(s)');
+          log('  ' + fecha + ': ' + slots.length + ' horario(s) libre(s).');
           var inner = Promise.resolve(null);
           slots.forEach(function (sl) {
             if (sl.id_hora_fk == null) return;
@@ -276,13 +448,22 @@
               if (res2) return res2;
               return book(sedeId, tramId, fecha, sl).then(function (out) {
                 if (out === 'OK') return findActive(tramName).catch(function () { return null; })
-                  .then(function (info) { success(fecha, sl, info); return 'DONE'; });
+                  .then(function (info) { success(fecha, sl.hora_inicio, info); return 'DONE'; });
                 if (out === 'ACTIVA' || out === 'TIMEOUT') return findActive(tramName).catch(function () { return null; }).then(function (c) {
-                  if (c) { success(String(c.fecha_cita).slice(0, 10), { hora_inicio: c.hora_inicio }, c); return 'DONE'; }
-                  if (out === 'ACTIVA') { stop('Ya existe una cita activa para este tramite', '#107c10'); alert('Este titular YA tiene una cita activa para este tramite. No se puede agendar otra.'); return 'DONE'; }
+                  if (c) { success(String(c.fecha_cita).slice(0, 10), c.hora_inicio, c); return 'DONE'; }
+                  if (out === 'ACTIVA') {
+                    stop('Este titular ya tiene una cita activa para este tramite.', '#107c10');
+                    showMsg('warn', 'Ya tiene una cita activa', 'El portal dice que este titular YA tiene una cita activa para este tramite. No se puede agendar otra. Revise "Mis citas".');
+                    return 'DONE';
+                  }
                   return null;
                 });
-                if (out === 'AUTH') { stop('La sesion se cerro. Inicie sesion otra vez.', '#b00'); beep(400, 400, 3); return 'DONE'; }
+                if (out === 'AUTH') {
+                  st.session = 'none';
+                  stop('Detenido: la sesion se cerro.', '#b00020'); beep(400, 400, 3);
+                  showMsg('err', 'La sesion se cerro', 'Pulse F5, inicie sesion otra vez y pulse el boton Agendador. Si todavia es la hora de los cupos, hagalo rapido.');
+                  return 'DONE';
+                }
                 if (out === 'NOTOKEN') return 'NOTOKEN';
                 return null;
               });
@@ -294,13 +475,18 @@
     });
     return chain;
   }
+  function endOfDay() {
+    var msg = st.sawSlotsAt
+      ? 'Aparecieron cupos a las ' + st.sawSlotsAt + ', pero se agotaron antes de poder agendar (' + st.bookFails + ' intento(s) fallido(s)).'
+      : 'No aparecieron cupos para esta sede y este tramite hasta la hora de parada.';
+    stop('Se detuvo: no se consiguio cupo hoy.', '#b35c00');
+    log('Fin de la busqueda. ' + msg);
+    showMsg('warn', 'No se consiguio cupo hoy', esc(msg) + '<br><br>Intente ' + nextReleaseText(now()) + ': inicie sesion a las 4:50 p.m., pulse BUSCAR Y AGENDAR a las 4:55 y marque las 3 casillas a las 4:58.');
+  }
   function tick() {
     if (!st.running) return;
-    if (st.stopAt && now() > st.stopAt) {
-      stop('Se detuvo: no se consiguio cupo hoy. Intente el proximo dia a las 4:50 p.m.', '#c60');
-      log('Fin de la busqueda. No hubo cupos.');
-      return;
-    }
+    guide();
+    if (st.stopAt && now() > st.stopAt) { endOfDay(); return; }
     if (st.busy) {
       if (Date.now() - st.busySince > 45000) { log('Aviso: una consulta quedo colgada; se reinicia.'); st.busy = false; }
       else return;
@@ -308,69 +494,77 @@
     // Alarma si no hay verificacion lista
     if (!freshTokens().length && Date.now() - st.lastNeedAlarm > 20000) {
       st.lastNeedAlarm = Date.now(); beep(660, 160, 2);
-      status('MARQUE LAS CASILLAS DE VERIFICACION', '#b00');
+      status('Buscando, pero SIN verificacion: marque las casillas.', '#b00020');
     }
     st.busy = true; st.busySince = Date.now(); st.tries++;
     var sedeId = Number($('ag2-sede').value), tramId = Number($('ag2-tram').value);
     api('/api/disponibilidad/dias?sede=' + sedeId + '&tramite=' + tramId).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (st.netFails >= 5) log('La conexion volvio.');
+      st.netFails = 0;
       var dias = (r.json && r.json.data) || [];
       if (!dias.length) {
-        if (freshTokens().length) status('Sin cupos por ahora (intento ' + st.tries + '). Salen cerca de las 5:00 p.m.', '#555');
-        if (st.tries % 60 === 0) log('sin cupos (intento ' + st.tries + ')');
+        if (freshTokens().length) status('Buscando... sin cupos todavia (consulta ' + st.tries + ').', '#555');
+        if (st.tries % 60 === 0) log('Sin cupos todavia (consulta ' + st.tries + ').');
         return;
       }
+      if (!st.sawSlotsAt) st.sawSlotsAt = hhmmss(now());
       log('HAY CUPOS: ' + dias.map(function (d) { return typeof d === 'string' ? d.slice(0, 10) : d.fecha; }).join(', '));
       beep(880, 150, 1);
-      status('Cupos encontrados. Agendando...', '#c60');
+      status('HAY CUPOS. Agendando...', '#b35c00');
       return attempt(sedeId, tramId, dias).then(function (res) {
-        if (res === 'NOTOKEN') { beep(660, 160, 3); status('HAY CUPOS: MARQUE LAS CASILLAS YA', '#b00'); }
+        if (res === 'NOTOKEN') { beep(660, 160, 3); status('HAY CUPOS: MARQUE LAS CASILLAS YA', '#b00020'); }
+        else if (!res && st.running) status('Esos cupos se agotaron antes. Se sigue buscando...', '#b35c00');
       });
-    }).catch(function () { /* red lenta: se reintenta en el siguiente ciclo */ })
-      .finally(function () { st.busy = false; });
+    }).catch(function (e) {
+      st.netFails++;
+      if (st.netFails === 5) log('Problema de conexion con el portal (' + (e && (e.message || e.name)) + '). Se sigue intentando.');
+      if (st.netFails >= 5) status('Problema de conexion: reintentando...', '#b00020');
+    }).finally(function () { st.busy = false; });
   }
   $('ag2-go').onclick = function () {
-    if (!$('ag2-sede').value || !$('ag2-tram').value) { alert('Elija el tramite y la sede.'); return; }
+    if (!$('ag2-sede').value || !$('ag2-tram').value) { showMsg('warn', 'Faltan datos', 'Elija el tramite y la sede.'); return; }
+    if (st.session !== 'ok') { showMsg('err', 'No hay sesion', 'Inicie sesion en la pagina de Migracion con la cuenta del titular. Luego pulse el boton Agendador otra vez.'); return; }
     save();
+    var d = now(), stopAt = stopTimeToday();
+    if (!releaseDay(d)) {
+      showMsg('warn', 'Hoy no salen cupos', 'Hoy es ' + DIAS[d.getDay()] + '. Los cupos salen de domingo a jueves, cerca de las 5:00 p.m. Vuelva ' + nextReleaseText(d) + ' a las 4:50 p.m.<br><br>Hoy si puede hacer la PRUEBA.');
+      return;
+    }
+    if (d > stopAt) {
+      log('No se inicio: ya paso la hora de parada (' + $('ag2-stop').value + ').');
+      showMsg('warn', 'Ya paso la hora de los cupos de hoy', 'Los cupos salen cerca de las 5:00 p.m. y en Medellin se acaban en menos de un minuto.<br><br>' +
+        'Vuelva ' + nextReleaseText(d) + ':<br>&bull; 4:50 p.m.: inicie sesion<br>&bull; 4:55 p.m.: pulse BUSCAR Y AGENDAR<br>&bull; 4:58 p.m.: marque las 3 casillas<br><br>Ahora si puede hacer la PRUEBA.');
+      return;
+    }
+    var early = new Date(d); early.setHours(16, 30, 0, 0);
+    if (d < early && !confirm('Todavia es temprano. Los cupos salen cerca de las 5:00 p.m.\n\n' +
+        'Lo mejor es pulsar BUSCAR Y AGENDAR a las 4:55 p.m.\n\nPulse Aceptar para buscar desde ya, o Cancelar para esperar.')) {
+      return;
+    }
     $('ag2-go').disabled = true;
-    status('Comprobando...', '#555');
-    var tramName = $('ag2-tram').selectedOptions[0].textContent;
+    status('Comprobando si ya tiene cita...', '#555');
+    var tramName = selText('ag2-tram');
     findActive(tramName).then(function (c) {
       if (c) {
         $('ag2-go').disabled = false;
-        status('Este titular ya tiene cita', '#107c10');
-        alert('Ya tiene cita.\n\nRadicado: ' + c.radicado + '\nFecha: ' + String(c.fecha_cita).slice(0, 10) + ' ' + (c.hora_inicio || '') + '\nSede: ' + (c.sede || ''));
+        status('Este titular ya tiene cita.', '#107c10');
+        showMsg('ok', 'Ya tiene cita', '<b>Radicado:</b> ' + esc(c.radicado) + '<br><b>Fecha:</b> ' + esc(String(c.fecha_cita).slice(0, 10)) + ' ' + esc(c.hora_inicio || '') +
+          '<br><b>Sede:</b> ' + esc(c.sede || '') + '<br><br>Cada persona solo puede tener una cita activa por tramite.');
         return;
       }
-      st.stopAt = null;
-      var m = /^(\d{1,2}):(\d{2})$/.exec($('ag2-stop').value.trim());
-      if (!m) m = [null, '17', '15'];
-      var d = new Date(); d.setHours(+m[1], +m[2], 0, 0);
-      if (d < new Date()) {
-        // Ya paso la hora de parada de hoy: los cupos de hoy ya salieron.
-        $('ag2-go').disabled = false;
-        status('Ya paso la hora de los cupos de hoy. Vuelva el proximo dia a las 4:50 p.m.', '#c60');
-        log('No se inicio: ya son mas de las ' + m[1] + ':' + m[2] + '.');
-        alert('YA PASO LA HORA DE LOS CUPOS DE HOY\n\n' +
-          'Los cupos salen de domingo a jueves cerca de las 5:00 p.m. y en Medellin se acaban en menos de un minuto.\n\n' +
-          'Vuelva el proximo dia de domingo a jueves:\n' +
-          '  4:50 p.m.  inicie sesion\n  4:55 p.m.  pulse BUSCAR Y AGENDAR\n  4:58 p.m.  marque las 3 casillas');
-        return;
-      }
-      var early = new Date(); early.setHours(16, 30, 0, 0);
-      if (new Date() < early && !confirm('Todavia es temprano. Los cupos salen cerca de las 5:00 p.m.\n\n' +
-          'Lo mejor es pulsar BUSCAR Y AGENDAR a las 4:55 p.m.\n\nPulse Aceptar para buscar desde ya, o Cancelar para esperar.')) {
-        $('ag2-go').disabled = false; status('Listo. Pulse BUSCAR Y AGENDAR a las 4:55 p.m.', '#555'); return;
-      }
-      st.stopAt = d; log('Se detendra automaticamente a las ' + m[1] + ':' + m[2]);
-      st.running = true; st.tries = 0;
-      $('ag2-stopbtn').disabled = false;
-      log('Buscando: ' + tramName + ' en ' + $('ag2-sede').selectedOptions[0].textContent);
+      st.stopAt = stopAt; st.running = true; st.tries = 0; st.netFails = 0; st.sawSlotsAt = null; st.bookFails = 0;
+      $('ag2-stopbtn').disabled = false; $('ag2-test').disabled = true;
+      $('ag2-msg').style.display = 'none';
+      log('Buscando: ' + tramName + ' en ' + selText('ag2-sede') + '. Se detiene sola a las ' + $('ag2-stop').value + '.');
       status('Buscando cupos...', '#555');
       st.timer = setInterval(tick, POLL_MS);
       tick();
-    }, function () {
+    }, function (e) {
       $('ag2-go').disabled = false;
-      status('No se pudo consultar Mis citas. Revise la sesion.', '#b00');
+      status('No se pudo revisar "Mis citas".', '#b00020');
+      if (e && e.message === 'sin sesion') { st.session = 'none'; showMsg('err', 'La sesion se cerro', 'Pulse F5, inicie sesion otra vez y pulse el boton Agendador.'); }
+      else showMsg('err', 'Problema de conexion', 'No se pudo revisar "Mis citas". Revise la conexion a internet y pulse BUSCAR Y AGENDAR otra vez.');
     });
   };
   $('ag2-stopbtn').onclick = function () { stop('Detenido.', '#555'); log('Detenido por el usuario.'); };
@@ -388,7 +582,7 @@
   // el portal acepta la verificacion de Cloudflare que produce este panel.
   function nextEmptySunday(sedeId, tramId, k) {
     var d = new Date(); d.setDate(d.getDate() + 14 + ((7 - d.getDay()) % 7) + 7 * (k || 0));
-    var f = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    var f = localDate(d);
     return api('/api/disponibilidad/slots?sede=' + sedeId + '&tramite=' + tramId + '&fecha=' + f).then(function (r) {
       var slots = (r.json && r.json.data) || [];
       if (slots.length) { if ((k || 0) >= 3) throw new Error('hay cupos'); return nextEmptySunday(sedeId, tramId, (k || 0) + 1); }
@@ -396,43 +590,53 @@
     });
   }
   $('ag2-test').onclick = function () {
-    if (st.running) { alert('Pulse DETENER antes de hacer la prueba.'); return; }
-    if (!freshTokens().length) { alert('Primero marque UNA casilla "Verifique que es un ser humano" y espere el chulo verde. Luego pulse PROBAR.'); return; }
+    if (st.running) { showMsg('warn', 'Primero detenga la busqueda', 'Pulse DETENER antes de hacer la prueba.'); return; }
+    if (st.session !== 'ok') { showMsg('err', 'No hay sesion', 'Inicie sesion en la pagina de Migracion y pulse el boton Agendador otra vez.'); return; }
+    if (!freshTokens().length) {
+      showMsg('warn', 'Falta la verificacion', 'Primero marque UNA casilla <i>"Verifique que es un ser humano"</i> y espere a que diga <b>"✓ Lista"</b>. Luego pulse PROBAR.');
+      return;
+    }
     var sedeId = Number($('ag2-sede').value), tramId = Number($('ag2-tram').value);
-    if (!sedeId || !tramId) { alert('Elija el tramite y la sede.'); return; }
+    if (!sedeId || !tramId) { showMsg('warn', 'Faltan datos', 'Elija el tramite y la sede.'); return; }
     $('ag2-test').disabled = true;
     status('Probando...', '#555');
+    showMsg('info', 'Probando...', 'Espere unos segundos.');
     nextEmptySunday(sedeId, tramId).then(function (fecha) {
       var tok = takeToken();
       log('PRUEBA: solicitud para el domingo ' + fecha + ' (ese dia no hay citas).');
       var body = JSON.stringify({ sedeId: sedeId, tramiteId: tramId, fecha: fecha, horaId: 3, turnstileToken: tok });
       return api('/api/citas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body }, BOOK_TIMEOUT_MS);
     }).then(function (r) {
-      var j = r.json || {};
-      var code = j.code || (j.data && j.data.code) || '';
-      var err = j.error || (j.data && j.data.error) || ('HTTP ' + r.status);
-      log('PRUEBA: respuesta del portal: ' + err + (code ? ' (' + code + ')' : '') + ' [HTTP ' + r.status + ']');
+      var e = errOf(r);
+      var raw = e.text + (e.code ? ' (' + e.code + ')' : '') + ' [HTTP ' + r.status + ']';
+      log('PRUEBA: respuesta del portal: ' + raw);
       if (r.status === 401) {
-        status('PRUEBA: no hay sesion. Inicie sesion otra vez.', '#b00');
-        alert('PRUEBA NO VALIDA\n\nLa sesion del portal se cerro. Inicie sesion otra vez y repita la prueba.');
-      } else if (code === 'CAPTCHA_INVALID' || err === 'Required') {
-        status('PRUEBA FALLIDA: el portal rechazo la verificacion', '#b00');
-        alert('PRUEBA FALLIDA\n\nEl portal NO acepto la verificacion de Cloudflare.\nRespuesta: ' + err + '\n\nAvise a quien le envio este programa y copie el registro de abajo.');
-      } else if (r.ok && j.ok !== false) {
-        status('ATENCION: el portal acepto la solicitud', '#c60');
-        alert('ATENCION\n\nEl portal respondio como si hubiera agendado. Revise "Mis citas" y cancele cualquier cita de prueba.');
+        st.session = 'none';
+        status('Prueba no valida: no hay sesion.', '#b00020');
+        showMsg('err', 'Prueba no valida: la sesion se cerro', 'Pulse F5, inicie sesion otra vez, pulse el boton Agendador y repita la prueba.');
+      } else if (e.code === 'CAPTCHA_INVALID' || e.text === 'Required') {
+        status('PRUEBA FALLIDA', '#b00020');
+        showMsg('err', 'PRUEBA FALLIDA', 'El portal <b>no acepto</b> la verificacion de Cloudflare.<br>Respuesta del portal: <i>' + esc(raw) + '</i><br><br>' +
+          'Pulse <b>Copiar registro</b> y envie el texto (o una foto de esta pantalla) a quien le envio este programa.');
+      } else if (r.ok && (r.json || {}).ok !== false) {
+        status('ATENCION: el portal acepto la solicitud', '#b35c00');
+        showMsg('warn', 'ATENCION', 'El portal respondio como si hubiera agendado. Revise "Mis citas" y cancele cualquier cita de prueba. Avise a quien le envio este programa.');
       } else {
         status('PRUEBA CORRECTA', '#107c10');
         beep(1200, 150, 2);
-        alert('PRUEBA CORRECTA\n\nEl portal acepto la verificacion de Cloudflare.\nNo se agendo nada (respuesta: ' + err + ').\n\nEl programa esta listo para el dia de la cita.');
+        showMsg('ok', 'PRUEBA CORRECTA', 'El portal <b>acepto</b> la verificacion de Cloudflare. No se agendo nada.<br>' +
+          '<span style="font-size:12px;color:#555">Respuesta del portal: ' + esc(raw) + '</span><br><br>El programa esta listo para el dia de la cita.');
       }
-    }).catch(function (e) {
-      status('PRUEBA: no se pudo completar', '#b00');
-      log('PRUEBA: error ' + (e && (e.message || e.name)));
-      alert('No se pudo completar la prueba (' + (e && (e.message || e.name)) + '). Intente otra vez en un minuto.');
-    }).finally(function () { $('ag2-test').disabled = false; });
+    }).catch(function (err) {
+      var m = err && (err.name === 'AbortError' ? 'el portal no respondio a tiempo' : (err.message || err.name));
+      status('La prueba no se pudo completar.', '#b00020');
+      log('PRUEBA: error: ' + m);
+      showMsg('err', 'La prueba no se pudo completar', 'Motivo: ' + esc(m) + '.<br>Revise la conexion a internet y pruebe otra vez en un minuto.');
+    }).finally(function () { $('ag2-test').disabled = st.running; });
   };
 
   window.__agendadorV2 = { show: function () { box.style.display = ''; $('ag2-body').style.display = ''; }, state: st, version: VERSION };
+  guide();
+  setInterval(function () { if (!st.running) guide(); }, 1000);
   log('Agendador ' + VERSION + ' listo.');
 })();
