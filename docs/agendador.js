@@ -8,7 +8,7 @@
  */
 (function () {
   'use strict';
-  var VERSION = '2.1.0';
+  var VERSION = '2.1.1';
   var SITEKEY = '0x4AAAAAAF0_ravvCrdYLiwp';   // clave publica del portal (pagina /agendar)
   var ACTION = 'appointment_booking';         // la misma accion que usa el portal; el servidor la exige
   var BASE = '/citas';
@@ -24,7 +24,19 @@
     location.href = 'https://apps.migracioncolombia.gov.co/citas/agendar';
     return;
   }
-  if (window.__agendadorV2) { window.__agendadorV2.show(); return; }
+  if (window.__agendadorV2) {
+    // Ya hay un panel abierto en esta pagina. Si es de una version anterior,
+    // el panel viejo sigue activo: hay que recargar la pagina para usar la nueva.
+    if (window.__agendadorV2.version !== VERSION) {
+      alert('HAY UNA VERSION NUEVA DEL AGENDADOR (' + VERSION + ').\n\n' +
+        'El panel abierto es la version ' + window.__agendadorV2.version + '.\n\n' +
+        '1. Pulse la tecla F5 para recargar la pagina.\n' +
+        '2. Si lo pide, inicie sesion otra vez.\n' +
+        '3. Pulse el boton Agendador.\n\n' +
+        'Arriba del panel debe decir "Agendador de Citas ' + VERSION + '".');
+    }
+    window.__agendadorV2.show(); return;
+  }
 
   // ---------------- estado ----------------
   var st = {
