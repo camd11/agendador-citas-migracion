@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agendador de Citas — Migración Colombia</title>
+<style>
+  body { font-family: "Segoe UI", Arial, sans-serif; font-size: 20px; line-height: 1.55; color: #1b1b1b;
+         max-width: 860px; margin: 0 auto; padding: 0 22px 60px; background: #fff; }
+  header { background: #0a2463; color: #fff; margin: 0 -22px 24px; padding: 22px; }
+  header h1 { margin: 0; font-size: 30px; }
+  header p { margin: 6px 0 0; color: #cdd8f0; }
+  h2 { font-size: 26px; color: #0a2463; border-bottom: 3px solid #0a2463; padding-bottom: 4px; margin-top: 44px; }
+  ol > li { margin-bottom: 14px; }
+  .box { border-radius: 10px; padding: 14px 18px; margin: 18px 0; }
+  .warn { background: #fff4e0; border: 2px solid #d98a00; }
+  .ok { background: #eaf6ea; border: 2px solid #107c10; }
+  .info { background: #eef2fb; border: 2px solid #0a2463; }
+  .big { font-size: 24px; font-weight: 700; }
+  a.bm { display: inline-block; background: #d35400; color: #fff; font-size: 26px; font-weight: 700; text-decoration: none;
+         padding: 16px 30px; border-radius: 10px; border: 3px dashed #7a3000; cursor: grab; }
+  kbd { background: #f1f1f1; border: 1px solid #999; border-bottom-width: 3px; border-radius: 5px; padding: 1px 8px;
+        font-family: inherit; font-size: 18px; }
+  table { border-collapse: collapse; width: 100%; font-size: 19px; }
+  td, th { border: 1px solid #bbb; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #eef2fb; }
+  textarea { width: 100%; height: 90px; font: 14px Consolas, monospace; }
+  button.copy { font-size: 18px; padding: 8px 16px; cursor: pointer; }
+  .small { font-size: 16px; color: #555; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agendador de Citas — Migración Colombia</h1>
+  <p>Versión 2.0 · noviembre de 2026 · funciona en el navegador Chrome o Edge, en un computador</p>
+</header>
+
+<div class="box warn">
+  <p class="big">¿Por qué cambió el programa?</p>
+  <p>En noviembre de 2026 Migración Colombia agregó una casilla de seguridad
+  <b>«Verifique que es un ser humano»</b> a su página de citas. El programa anterior de Windows ya
+  <b>no puede</b> agendar, porque una persona tiene que marcar esa casilla.</p>
+  <p>La nueva versión trabaja <b>dentro de la página oficial</b> de Migración. Usted marca las casillas
+  y el programa vigila los cupos y agenda en el mismo segundo en que aparecen.</p>
+  <p>El programa anterior de Windows ya no sirve. Puede borrarlo.</p>
+</div>
+
+<h2>Paso 1 — Preparar (una sola vez)</h2>
+<ol>
+  <li>Abra esta página en <b>Google Chrome</b> o <b>Microsoft Edge</b>, en un computador
+      (no en el celular).</li>
+  <li>Haga visible la <b>barra de favoritos</b>: pulse a la vez las teclas
+      <kbd>Ctrl</kbd> + <kbd>Mayús</kbd> + <kbd>B</kbd>.
+      Aparece una barra delgada debajo de la dirección de la página.</li>
+  <li>Con el ratón, <b>arrastre</b> este botón naranja hasta esa barra y suéltelo allí:
+    <p style="text-align:center;margin:22px 0">
+      <a class="bm" title="Arrastre este botón a la barra de favoritos" onclick="alert('No haga clic aquí. Arrastre este botón con el ratón hasta la barra de favoritos.'); return false;"
+         href="javascript:(function(){if(location.host!=='apps.migracioncolombia.gov.co'){alert('Primero abra la pagina de Migracion e inicie sesion. Se abrira ahora.');location.href='https://apps.migracioncolombia.gov.co/citas/agendar';return;}var s=document.createElement('script');s.src='https://camd11.github.io/agendador-citas-migracion/agendador.js?v='+Date.now();s.onerror=function(){alert('No se pudo cargar el Agendador. Revise la conexion a internet.');};document.body.appendChild(s);})();">📅 Agendador</a>
+    </p>
+  </li>
+  <li>Ahora la barra de favoritos tiene un botón <b>📅 Agendador</b>. Ese es el programa.</li>
+</ol>
+<details class="box info">
+  <summary><b>Si no puede arrastrar el botón</b> (haga clic aquí)</summary>
+  <ol>
+    <li>Pulse <b>Copiar</b>:<br>
+      <textarea id="code" readonly></textarea><br>
+      <button class="copy" onclick="var t=document.getElementById('code');t.select();document.execCommand('copy');this.textContent='Copiado ✓';">Copiar</button></li>
+    <li>Haga clic derecho sobre la barra de favoritos y elija <b>«Agregar página…»</b>
+        (en Edge: <b>«Agregar página a la barra de favoritos»</b>).</li>
+    <li>En <b>Nombre</b> escriba: <code>Agendador</code></li>
+    <li>En <b>URL</b> haga clic derecho y elija <b>Pegar</b>. Luego pulse <b>Guardar</b>.</li>
+  </ol>
+</details>
+
+<h2>Paso 2 — Hacer la prueba (hoy, a cualquier hora)</h2>
+<div class="box ok">La prueba <b>no agenda ninguna cita</b>. Pide una cita para un domingo, y los domingos nunca hay citas.
+Solo comprueba que el portal acepta la casilla de seguridad.</div>
+<ol>
+  <li>Abra <a href="https://apps.migracioncolombia.gov.co/citas/agendar" target="_blank">apps.migracioncolombia.gov.co/citas/agendar</a>
+      e <b>inicie sesión</b> con el correo y la contraseña del titular, como siempre.</li>
+  <li>Si aparece el aviso «ATENCIÓN», pulse <b>Aceptar</b>.</li>
+  <li>Pulse el botón <b>📅 Agendador</b> de la barra de favoritos.
+      A la derecha se abre un panel azul que dice <b>«Agendador de Citas 2.0.0»</b> y el nombre del titular.</li>
+  <li>Elija el <b>Trámite</b> y la <b>Sede</b>.</li>
+  <li>Marque <b>una</b> casilla <b>«Verifique que es un ser humano»</b>. Espere el chulo verde ✓.
+      A veces el chulo aparece solo, sin hacer clic. Eso también está bien.</li>
+  <li>Pulse <b>PROBAR (no agenda nada)</b>.</li>
+</ol>
+<table>
+  <tr><th>El programa dice</th><th>Qué significa</th></tr>
+  <tr><td><b style="color:#107c10">PRUEBA CORRECTA</b></td><td>Todo funciona. Está lista para el día de la cita.</td></tr>
+  <tr><td><b style="color:#b00">PRUEBA FALLIDA</b></td><td>El portal no aceptó la casilla. Tome una foto de la pantalla
+      (con el panel y su registro) y envíela a quien le mandó este enlace.</td></tr>
+  <tr><td>«No hay sesión iniciada»</td><td>Inicie sesión en la página de Migración y pulse 📅 Agendador otra vez.</td></tr>
+</table>
+
+<h2>Paso 3 — El día de la cita</h2>
+<div class="box warn">
+  <p class="big">Los cupos salen de domingo a jueves, cerca de las 5:00 p.&nbsp;m., y solo para el día hábil siguiente.</p>
+  <p>Salen entre las 4:59 y las 5:01, y en Medellín se acaban en <b>menos de un minuto</b>.
+  Esté lista desde antes. A otras horas el sistema siempre dice que no hay citas: eso es normal.</p>
+</div>
+<table>
+  <tr><th style="width:120px">Hora</th><th>Qué hacer</th></tr>
+  <tr><td><b>4:50 p.&nbsp;m.</b></td><td>Abra la página de Migración e inicie sesión con la cuenta del titular.
+      Pulse <b>Aceptar</b> en el aviso.</td></tr>
+  <tr><td><b>4:53 p.&nbsp;m.</b></td><td>Pulse <b>📅 Agendador</b>. Revise el nombre del titular, el <b>Trámite</b> y la <b>Sede</b>.</td></tr>
+  <tr><td><b>4:55 p.&nbsp;m.</b></td><td>Pulse <b>BUSCAR Y AGENDAR</b>. El programa empieza a buscar.</td></tr>
+  <tr><td><b>4:58 p.&nbsp;m.</b></td><td>Marque las <b>3 casillas</b> «Verifique que es un ser humano». Espere los 3 chulos verdes.
+      El panel debe decir <b>«Verificaciones listas: 3 de 3»</b>.</td></tr>
+  <tr><td><b>4:58 a 5:15</b></td><td><b>No toque nada más.</b> Deje la página <b>visible y al frente</b>.
+      No minimice la ventana y no deje que el computador se suspenda.</td></tr>
+</table>
+<ul>
+  <li>Cada casilla vale <b>5 minutos</b> y sirve para <b>un</b> intento. Si suena una <b>alarma doble</b> o el panel dice
+      <b>«MARQUE LAS CASILLAS»</b>, marque otra vez las casillas que estén vacías.</li>
+  <li>Cuando consigue la cita, suenan <b>varios pitidos</b> y aparece <b>«CITA AGENDADA»</b> con la fecha, la hora y el
+      <b>radicado</b>. Tome una foto o anote el radicado. Migración también envía un correo de confirmación.</li>
+  <li>Si a las 5:15 no hubo cupos, el programa se detiene solo. Intente el siguiente día hábil.</li>
+</ul>
+
+<h2>Preguntas frecuentes</h2>
+<table>
+  <tr><th>Situación</th><th>Respuesta</th></tr>
+  <tr><td>«Este titular YA tiene una cita activa»</td><td>Cada persona solo puede tener una cita activa por trámite.
+      El programa se detiene. Revise «Mis citas» en la página de Migración.</td></tr>
+  <tr><td>«La sesión se cerró»</td><td>Inicie sesión otra vez y pulse 📅 Agendador.</td></tr>
+  <tr><td>Varias personas</td><td>El programa agenda para la persona con la sesión iniciada.
+      Para otra persona, cierre la sesión e inicie sesión con la cuenta de esa persona.</td></tr>
+  <tr><td>¿Guarda mi contraseña?</td><td>No. Usted inicia sesión en la página oficial. El programa nunca ve ni guarda la contraseña.</td></tr>
+  <tr><td>¿Es un programa externo?</td><td>Es un pequeño programa que se ejecuta solo dentro de la página oficial de Migración,
+      con su sesión. No instala nada en el computador. El código es público:
+      <a href="https://github.com/camd11/agendador-citas-migracion">github.com/camd11/agendador-citas-migracion</a>.</td></tr>
+</table>
+
+<h2>Uso responsable</h2>
+<p>Agendar una cita es <b>gratis</b> y no necesita intermediarios. Este programa solo hace la espera por usted: no da prioridad,
+no salta la fila y no crea cupos. Úselo para su propia cita o la de una persona que usted representa.
+No hay ninguna relación con Migración Colombia. Se entrega sin garantía.</p>
+<p class="small">Versión 2.0.0 · <a href="https://github.com/camd11/agendador-citas-migracion">código fuente</a></p>
+
+<script>
+  document.getElementById('code').value = document.querySelector('a.bm').getAttribute('href');
+</script>
+</body>
+</html>
