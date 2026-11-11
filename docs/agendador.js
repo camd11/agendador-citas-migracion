@@ -8,7 +8,7 @@
  */
 (function () {
   'use strict';
-  var VERSION = '2.1.1';
+  var VERSION = '2.2.0';
   var SITEKEY = '0x4AAAAAAF0_ravvCrdYLiwp';   // clave publica del portal (pagina /agendar)
   var ACTION = 'appointment_booking';         // la misma accion que usa el portal; el servidor la exige
   var BASE = '/citas';
@@ -47,7 +47,7 @@
     session: 'checking', // 'checking' | 'ok' | 'none'
     who: '',
     done: false, timer: null, lastNeedAlarm: 0, netFails: 0,
-    sawSlotsAt: null, bookFails: 0, ttLoaded: false
+    sawSlotsAt: null, bookFails: 0, ttLoaded: false, avail: null  // avail: {sede, fechas} si hay cupos ahora
   };
 
   // ---------------- utilidades ----------------
@@ -202,6 +202,8 @@
       g = ['#107c10', 'Todo listo: ' + n + ' de ' + N_WIDGETS + ' verificaciones. No toque nada y deje esta pagina al frente.' +
         (soon < 60000 ? ' Una verificacion vence en ' + mmss(soon) + '.' : '')];
     }
+    else if (st.avail && st.avail.fechas.length) g = ['#107c10', 'HAY CUPOS AHORA en ' + st.avail.sede + ' (' + st.avail.fechas.join(', ') +
+      '). Marque una casilla, espere "\u2713 Lista" y pulse BUSCAR Y AGENDAR.', true];
     else if (!releaseDay(d)) g = ['#0a2463', 'Hoy es ' + DIAS[d.getDay()] + ': hoy no salen cupos (salen de domingo a jueves). Puede hacer la PRUEBA. Para agendar, vuelva ' + nextReleaseText(d) + ' a las 4:50 p.m.'];
     else if (d > stopAt) g = ['#b35c00', 'Los cupos de hoy ya salieron (cerca de las 5:00 p.m.). Puede hacer la PRUEBA. Para agendar, vuelva ' + nextReleaseText(d) + ' a las 4:50 p.m.'];
     else if (d < start) g = ['#0a2463', 'Ahora puede hacer la PRUEBA. Para agendar, vuelva hoy a las 4:50 p.m. (faltan ' + mmss(start - d).replace(/:\d+$/, '') + ' minutos).'];
@@ -534,26 +536,66 @@
       if (st.netFails >= 5) status('Problema de conexion: reintentando...', '#b00020');
     }).finally(function () { st.busy = false; });
   }
+  function availNow(sedeId, tramId) {
+    return api('/api/disponibilidad/dias?sede=' + sedeId + '&tramite=' + tramId).then(function (r) {
+      var dias = (r.json && r.json.data) || [];
+      return dias.map(function (x) { return (typeof x === 'string' ? x : String(x.fecha || '')).slice(0, 10); }).filter(Boolean);
+    });
+  }
+  // Mientras el panel esta abierto y no busca, revisa cada 20 s si hay cupos ahora mismo
+  // (en sedes pequenas a veces quedan cupos libres durante la tarde y la noche).
+  function refreshAvail() {
+    if (st.running || st.done || st.session !== 'ok' || !$('ag2-sede').value || !$('ag2-tram').value) return;
+    var sede = selText('ag2-sede');
+    availNow(Number($('ag2-sede').value), Number($('ag2-tram').value)).then(function (f) {
+      var had = st.avail && st.avail.fechas.length && st.avail.sede === sede;
+      st.avail = { sede: sede, fechas: f };
+      if (f.length && !had) { log('Hay cupos ahora en ' + sede + ': ' + f.join(', ') + '.'); beep(880, 150, 2); }
+      guide();
+    }).catch(function () {});
+  }
+  setInterval(refreshAvail, 20000);
+  setTimeout(refreshAvail, 2500);
+  $('ag2-sede').addEventListener('change', function () { st.avail = null; setTimeout(refreshAvail, 300); });
+  $('ag2-tram').addEventListener('change', function () { st.avail = null; setTimeout(refreshAvail, 1500); });
+
   $('ag2-go').onclick = function () {
     if (!$('ag2-sede').value || !$('ag2-tram').value) { showMsg('warn', 'Faltan datos', 'Elija el tramite y la sede.'); return; }
     if (st.session !== 'ok') { showMsg('err', 'No hay sesion', 'Inicie sesion en la pagina de Migracion con la cuenta del titular. Luego pulse el boton Agendador otra vez.'); return; }
     save();
-    var d = now(), stopAt = stopTimeToday();
-    if (!releaseDay(d)) {
-      showMsg('warn', 'Hoy no salen cupos', 'Hoy es ' + DIAS[d.getDay()] + '. Los cupos salen de domingo a jueves, cerca de las 5:00 p.m. Vuelva ' + nextReleaseText(d) + ' a las 4:50 p.m.<br><br>Hoy si puede hacer la PRUEBA.');
-      return;
-    }
-    if (d > stopAt) {
-      log('No se inicio: ya paso la hora de parada (' + $('ag2-stop').value + ').');
-      showMsg('warn', 'Ya paso la hora de los cupos de hoy', 'Los cupos salen cerca de las 5:00 p.m. y en Medellin se acaban en menos de un minuto.<br><br>' +
-        'Vuelva ' + nextReleaseText(d) + ':<br>&bull; 4:50 p.m.: inicie sesion<br>&bull; 4:55 p.m.: pulse BUSCAR Y AGENDAR<br>&bull; 4:58 p.m.: marque las 3 casillas<br><br>Ahora si puede hacer la PRUEBA.');
-      return;
-    }
-    var early = new Date(d); early.setHours(16, 30, 0, 0);
-    if (d < early && !confirm('Todavia es temprano. Los cupos salen cerca de las 5:00 p.m.\n\n' +
-        'Lo mejor es pulsar BUSCAR Y AGENDAR a las 4:55 p.m.\n\nPulse Aceptar para buscar desde ya, o Cancelar para esperar.')) {
-      return;
-    }
+    $('ag2-go').disabled = true;
+    status('Revisando si hay cupos ahora...', '#555');
+    availNow(Number($('ag2-sede').value), Number($('ag2-tram').value)).then(function (f) { return f; }, function () { return []; }).then(function (fechas) {
+      $('ag2-go').disabled = false;
+      var d = now(), stopAt = stopTimeToday();
+      if (fechas.length) {
+        // Hay cupos en este momento: se agenda ya, sin esperar a las 5:00 p.m.
+        log('Hay cupos ahora (' + fechas.join(', ') + '): se intenta agendar ya.');
+        startSearch(new Date(Date.now() + 15 * 60000), true);
+        return;
+      }
+      if (!releaseDay(d)) {
+        showMsg('warn', 'Ahora no hay cupos', 'En este momento no hay cupos en ' + esc(selText('ag2-sede')) + ' para este tramite. Hoy es ' + DIAS[d.getDay()] +
+          ': hoy no salen cupos nuevos (salen de domingo a jueves, cerca de las 5:00 p.m.). Vuelva ' + nextReleaseText(d) + ' a las 4:50 p.m.<br><br>' +
+          'Si el recuadro de arriba dice <b>HAY CUPOS AHORA</b>, pulse BUSCAR Y AGENDAR en ese momento.');
+        return;
+      }
+      if (d > stopAt) {
+        log('No se inicio: no hay cupos ahora y ya paso la hora de parada (' + $('ag2-stop').value + ').');
+        showMsg('warn', 'Ahora no hay cupos', 'En este momento no hay cupos en ' + esc(selText('ag2-sede')) + ' para este tramite, y los cupos nuevos de hoy ya salieron (cerca de las 5:00 p.m.).<br><br>' +
+          'Vuelva ' + nextReleaseText(d) + ':<br>&bull; 4:50 p.m.: inicie sesion<br>&bull; 4:55 p.m.: pulse BUSCAR Y AGENDAR<br>&bull; 4:58 p.m.: marque las 3 casillas<br><br>' +
+          'Si el recuadro de arriba dice <b>HAY CUPOS AHORA</b>, pulse BUSCAR Y AGENDAR en ese momento.');
+        return;
+      }
+      var early = new Date(d); early.setHours(16, 30, 0, 0);
+      if (d < early && !confirm('Ahora no hay cupos. Los cupos nuevos salen cerca de las 5:00 p.m.\n\n' +
+          'Lo mejor es pulsar BUSCAR Y AGENDAR a las 4:55 p.m.\n\nPulse Aceptar para buscar desde ya, o Cancelar para esperar.')) {
+        return;
+      }
+      startSearch(stopAt, false);
+    });
+  };
+  function startSearch(stopAt, nowMode) {
     $('ag2-go').disabled = true;
     status('Comprobando si ya tiene cita...', '#555');
     var tramName = selText('ag2-tram');
@@ -565,10 +607,11 @@
           '<br><b>Sede:</b> ' + esc(c.sede || '') + '<br><br>Cada persona solo puede tener una cita activa por tramite.');
         return;
       }
-      st.stopAt = stopAt; st.running = true; st.tries = 0; st.netFails = 0; st.sawSlotsAt = null; st.bookFails = 0;
+      st.avail = null; st.stopAt = stopAt; st.running = true; st.tries = 0; st.netFails = 0; st.sawSlotsAt = null; st.bookFails = 0;
       $('ag2-stopbtn').disabled = false; $('ag2-test').disabled = true;
       $('ag2-msg').style.display = 'none';
-      log('Buscando: ' + tramName + ' en ' + selText('ag2-sede') + '. Se detiene sola a las ' + $('ag2-stop').value + '.');
+      log('Buscando: ' + tramName + ' en ' + selText('ag2-sede') + '. Se detiene sola a las ' + hhmmss(stopAt).slice(0, 5) + '.');
+      if (nowMode && !freshTokens().length) showMsg('warn', 'Hay cupos ahora: falta la verificacion', 'Marque una casilla "Verifique que es un ser humano". En cuanto diga "\u2713 Lista", el programa agenda solo.');
       status('Buscando cupos...', '#555');
       st.timer = setInterval(tick, POLL_MS);
       tick();
@@ -578,7 +621,7 @@
       if (e && e.message === 'sin sesion') { st.session = 'none'; showMsg('err', 'La sesion se cerro', 'Pulse F5, inicie sesion otra vez y pulse el boton Agendador.'); }
       else showMsg('err', 'Problema de conexion', 'No se pudo revisar "Mis citas". Revise la conexion a internet y pulse BUSCAR Y AGENDAR otra vez.');
     });
-  };
+  }
   $('ag2-stopbtn').onclick = function () { stop('Detenido.', '#555'); log('Detenido por el usuario.'); };
 
   // ---------------- mantener la sesion ----------------

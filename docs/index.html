@@ -32,7 +32,7 @@
 <body>
 <header>
   <h1>Agendador de Citas — Migración Colombia</h1>
-  <p>Versión 2.1 · noviembre de 2026 · funciona en el navegador Chrome o Edge, en un computador</p>
+  <p>Versión 2.2 · noviembre de 2026 · funciona en el navegador Chrome o Edge, en un computador</p>
 </header>
 
 <div class="box warn">
@@ -121,8 +121,22 @@ Solo comprueba que el portal acepta la casilla de seguridad.</div>
       <b>radicado</b>. Tome una foto o anote el radicado. Migración también envía un correo de confirmación.</li>
   <li>Si a las 5:15 no hubo cupos, el programa se detiene solo y le dice si aparecieron cupos y se agotaron, o si no aparecieron.
       Intente el siguiente día de domingo a jueves.</li>
-  <li>Si pulsa BUSCAR Y AGENDAR un viernes, un sábado o después de las 5:15, el programa le explica que a esa hora no salen cupos y no empieza.</li>
+  <li>Si pulsa BUSCAR Y AGENDAR cuando no hay cupos y no es la hora (viernes, sábado o después de las 5:15), el programa se lo explica y no empieza.</li>
 </ul>
+
+<h2>Cupos libres a otras horas</h2>
+<div class="box ok">
+  <p>En algunas sedes (por ejemplo Cartagena y ciudades pequeñas) a veces <b>quedan cupos libres</b> durante la tarde y la noche.
+  Con el panel abierto, el programa revisa la sede elegida cada 20 segundos. Si hay cupos, el recuadro de arriba dice en verde
+  <b>«HAY CUPOS AHORA»</b> y suenan dos pitidos.</p>
+  <ol>
+    <li>Marque una casilla «Verifique que es un ser humano» y espere «✓ Lista».</li>
+    <li>Pulse <b>BUSCAR Y AGENDAR</b>. El programa agenda en ese mismo momento, a cualquier hora.</li>
+  </ol>
+  <p><b>Atención:</b> esto agenda una cita <b>real</b>. Cada persona solo puede tener <b>una cita activa por trámite</b>.
+  Si agenda en Cartagena, no podrá agendar en Medellín para el mismo trámite hasta cancelar la de Cartagena
+  (se puede cancelar en «Mis citas» hasta 4 horas antes).</p>
+</div>
 
 <h2>Preguntas frecuentes</h2>
 <table>
@@ -142,7 +156,7 @@ Solo comprueba que el portal acepta la casilla de seguridad.</div>
 <p>Agendar una cita es <b>gratis</b> y no necesita intermediarios. Este programa solo hace la espera por usted: no da prioridad,
 no salta la fila y no crea cupos. Úselo para su propia cita o la de una persona que usted representa.
 No hay ninguna relación con Migración Colombia. Se entrega sin garantía.</p>
-<p class="small">Versión 2.1.1 · <a href="https://github.com/camd11/agendador-citas-migracion">código fuente</a></p>
+<p class="small">Versión 2.2.0 · <a href="https://github.com/camd11/agendador-citas-migracion">código fuente</a></p>
 
 <script>
   document.getElementById('code').value = document.querySelector('a.bm').getAttribute('href');
