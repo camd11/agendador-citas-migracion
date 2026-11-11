@@ -8,7 +8,7 @@
  */
 (function () {
   'use strict';
-  var VERSION = '2.2.0';
+  var VERSION = '2.3.0';
   var SITEKEY = '0x4AAAAAAF0_ravvCrdYLiwp';   // clave publica del portal (pagina /agendar)
   var ACTION = 'appointment_booking';         // la misma accion que usa el portal; el servidor la exige
   var BASE = '/citas';
@@ -149,6 +149,10 @@
     '#ag2-ver p{margin:0 0 6px;font-size:13px}#ag2-tokinfo{font-weight:700;margin-top:4px}' +
     '#ag2 .wl{font-size:12px;font-weight:700;margin:0 0 6px 2px}' +
     '#ag2 .x{background:none;color:#fff;font-size:18px;padding:0 4px}' +
+    '#ag2-allres{margin-top:6px;border:1px solid #bbb;border-radius:6px;max-height:260px;overflow:auto;display:none;font-size:13px}' +
+    '#ag2-allres table{border-collapse:collapse;width:100%}#ag2-allres td,#ag2-allres th{border-bottom:1px solid #ddd;padding:4px 6px;text-align:left;vertical-align:top}' +
+    '#ag2-allres th{background:#eef2fb;position:sticky;top:0}#ag2-allres tr.r{cursor:pointer}#ag2-allres tr.r:hover{background:#eaf6ea}' +
+    '#ag2-allres .sel{background:#fff4c2}#ag2-allres .hd{padding:6px;font-weight:700}' +
     '@keyframes ag2blink{50%{opacity:.35}}#ag2 .blink{animation:ag2blink 1s step-start infinite}';
   var styleEl = document.createElement('style'); styleEl.textContent = css; document.head.appendChild(styleEl);
   var saved = loadSaved();
@@ -168,6 +172,8 @@
     '<div class="row" style="margin-top:10px"><button id="ag2-go">BUSCAR Y AGENDAR</button>' +
     '<button id="ag2-stopbtn" disabled style="flex:0 0 110px">DETENER</button></div>' +
     '<button id="ag2-test" style="width:100%;margin-top:6px;background:#e8eefc;color:#0a2463">PROBAR (no agenda nada)</button>' +
+    '<button id="ag2-all" style="width:100%;margin-top:6px;background:#fff8e1;color:#5a3d00">VER CUPOS EN TODAS LAS SEDES</button>' +
+    '<div id="ag2-allres"></div>' +
     '<div id="ag2-status">Listo.</div>' +
     '<textarea id="ag2-log" readonly></textarea>' +
     '<div class="row" style="margin-top:4px;align-items:center"><div style="font-size:12px;color:#666;flex:1">Deje esta pestana <b>visible y al frente</b>.</div>' +
@@ -202,8 +208,9 @@
       g = ['#107c10', 'Todo listo: ' + n + ' de ' + N_WIDGETS + ' verificaciones. No toque nada y deje esta pagina al frente.' +
         (soon < 60000 ? ' Una verificacion vence en ' + mmss(soon) + '.' : '')];
     }
-    else if (st.avail && st.avail.fechas.length) g = ['#107c10', 'HAY CUPOS AHORA en ' + st.avail.sede + ' (' + st.avail.fechas.join(', ') +
-      '). Marque una casilla, espere "\u2713 Lista" y pulse BUSCAR Y AGENDAR.', true];
+    else if (st.avail && st.avail.fechas.length) g = ['#107c10', 'HAY CUPOS AHORA en ' + st.avail.sede + ' para el ' + fechaTxt(st.avail.fechas[0]) +
+      (st.avail.horas && st.avail.horas.length ? ' (' + st.avail.horas.join(', ') + ')' : '') +
+      '. Marque una casilla, espere "\u2713 Lista" y pulse BUSCAR Y AGENDAR.', true];
     else if (!releaseDay(d)) g = ['#0a2463', 'Hoy es ' + DIAS[d.getDay()] + ': hoy no salen cupos (salen de domingo a jueves). Puede hacer la PRUEBA. Para agendar, vuelva ' + nextReleaseText(d) + ' a las 4:50 p.m.'];
     else if (d > stopAt) g = ['#b35c00', 'Los cupos de hoy ya salieron (cerca de las 5:00 p.m.). Puede hacer la PRUEBA. Para agendar, vuelva ' + nextReleaseText(d) + ' a las 4:50 p.m.'];
     else if (d < start) g = ['#0a2463', 'Ahora puede hacer la PRUEBA. Para agendar, vuelva hoy a las 4:50 p.m. (faltan ' + mmss(start - d).replace(/:\d+$/, '') + ' minutos).'];
@@ -224,10 +231,13 @@
         var o = document.createElement('option'); o.value = s.id_cfsm; o.textContent = s.dependencia; sel.appendChild(o);
       });
       if (!list.length) { sel.innerHTML = '<option value="">(sin sedes para este tramite)</option>'; }
-      var want = selectName || 'MEDELLIN';
-      for (var i = 0; i < sel.options.length; i++) {
-        if (sel.options[i].value === String(want) || noAccent(sel.options[i].textContent) === noAccent(want)) { sel.selectedIndex = i; break; }
-      }
+      var pick = function (want) {
+        for (var i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === String(want) || noAccent(sel.options[i].textContent) === noAccent(want)) { sel.selectedIndex = i; return true; }
+        }
+        return false;
+      };
+      if (!(selectName && pick(selectName))) pick('MEDELLIN');
     }).catch(function () {
       sel.innerHTML = '<option value="">error al cargar sedes</option>';
       showMsg('err', 'No se pudieron cargar las sedes', 'Revise la conexion a internet y pulse F5 para recargar la pagina. Luego pulse el boton Agendador otra vez.');
@@ -265,7 +275,7 @@
       var o = document.createElement('option'); o.value = t.id_tipo_tramite; o.textContent = t.tramite; sel.appendChild(o);
     });
     if (saved.tramite) sel.value = String(saved.tramite);
-    sel.onchange = function () { loadSedes(sel.value); save(); };
+    sel.onchange = function () { loadSedes(sel.value).then(save); };
     $('ag2-sede').onchange = save; $('ag2-stop').onchange = save;
     return loadSedes(sel.value, saved.sede);
   }).catch(function () {
@@ -547,11 +557,15 @@
   function refreshAvail() {
     if (st.running || st.done || st.session !== 'ok' || !$('ag2-sede').value || !$('ag2-tram').value) return;
     var sede = selText('ag2-sede');
-    availNow(Number($('ag2-sede').value), Number($('ag2-tram').value)).then(function (f) {
+    var sedeId = Number($('ag2-sede').value), tramId = Number($('ag2-tram').value);
+    availNow(sedeId, tramId).then(function (f) {
       var had = st.avail && st.avail.fechas.length && st.avail.sede === sede;
-      st.avail = { sede: sede, fechas: f };
-      if (f.length && !had) { log('Hay cupos ahora en ' + sede + ': ' + f.join(', ') + '.'); beep(880, 150, 2); }
-      guide();
+      if (!f.length) { st.avail = { sede: sede, fechas: [] }; guide(); return; }
+      return slotsOf(sedeId, tramId, f[0]).then(function (sl) {
+        st.avail = { sede: sede, fechas: f, horas: sl.map(function (x) { return x.hora_inicio; }) };
+        if (!had) { log('Hay cupos ahora en ' + sede + ' para el ' + f[0] + ': ' + st.avail.horas.join(', ') + '.'); beep(880, 150, 2); }
+        guide();
+      });
     }).catch(function () {});
   }
   setInterval(refreshAvail, 20000);
@@ -689,6 +703,87 @@
       showMsg('err', 'La prueba no se pudo completar', 'Motivo: ' + esc(m) + '.<br>Revise la conexion a internet y pruebe otra vez en un minuto.');
     }).finally(function () { $('ag2-test').disabled = st.running; });
   };
+
+  // ---------------- cupos en todas las sedes ----------------
+  function scrollPanelTo(el) {
+    try { box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - 140; } catch (e) {}
+  }
+  function fechaTxt(f) {
+    var d = new Date(f + 'T12:00:00');
+    return isNaN(d) ? f : DIAS[d.getDay()] + ' ' + d.getDate() + '/' + (d.getMonth() + 1);
+  }
+  function slotsOf(sedeId, tramId, fecha) {
+    return api('/api/disponibilidad/slots?sede=' + sedeId + '&tramite=' + tramId + '&fecha=' + fecha).then(function (r) {
+      return ((r.json && r.json.data) || []).filter(function (x) { return x.id_hora_fk != null; });
+    });
+  }
+  function pool(items, n, fn) {
+    var i = 0, out = new Array(items.length);
+    function next() {
+      if (i >= items.length) return Promise.resolve();
+      var k = i++;
+      return Promise.resolve(fn(items[k], k)).then(function (v) { out[k] = v; }, function () { out[k] = null; }).then(next);
+    }
+    var runners = []; for (var j = 0; j < n; j++) runners.push(next());
+    return Promise.all(runners).then(function () { return out; });
+  }
+  function scanAll() {
+    var tramId = Number($('ag2-tram').value);
+    var sedes = Array.prototype.slice.call($('ag2-sede').options).filter(function (o) { return o.value; })
+      .map(function (o) { return { id: Number(o.value), name: o.textContent }; });
+    var res = $('ag2-allres');
+    if (!tramId || !sedes.length) { showMsg('warn', 'Faltan datos', 'Elija primero el tramite.'); return; }
+    $('ag2-all').disabled = true;
+    res.style.display = 'block';
+    var done = 0;
+    res.innerHTML = '<div class="hd">Revisando 0 de ' + sedes.length + ' sedes...</div>';
+    scrollPanelTo(res);
+    pool(sedes, 5, function (s) {
+      return availNow(s.id, tramId).then(function (fechas) {
+        return pool(fechas, 2, function (f) {
+          return slotsOf(s.id, tramId, f).then(function (sl) { return { fecha: f, slots: sl }; });
+        }).then(function (perDay) {
+          done++; res.querySelector('.hd') && (res.querySelector('.hd').textContent = 'Revisando ' + done + ' de ' + sedes.length + ' sedes...');
+          return { sede: s, dias: (perDay || []).filter(function (x) { return x && x.slots.length; }) };
+        });
+      }, function () { done++; return { sede: s, error: true }; });
+    }).then(function (rows) {
+      $('ag2-all').disabled = false;
+      rows = rows.filter(Boolean);
+      var withSlots = rows.filter(function (r) { return r.dias && r.dias.length; });
+      var errors = rows.filter(function (r) { return r.error; }).length;
+      var tram = selText('ag2-tram');
+      var html = '<div class="hd">' + esc(tram) + ' &mdash; ' + withSlots.length + ' de ' + rows.length + ' sedes con cupos (a las ' + hhmmss(now()).slice(0, 5) + ')' +
+        (errors ? ' &middot; ' + errors + ' sin respuesta' : '') + '. Toque una sede para elegirla.</div>';
+      if (withSlots.length) {
+        html += '<table><tr><th>Sede</th><th>Dia</th><th>Horarios libres</th></tr>';
+        withSlots.forEach(function (r) {
+          r.dias.forEach(function (d, i) {
+            var total = d.slots.reduce(function (a, x) { return a + (Number(x.cupos) || 1); }, 0);
+            html += '<tr class="r' + (String(r.sede.id) === $('ag2-sede').value ? ' sel' : '') + '" data-sede="' + r.sede.id + '">' +
+              '<td><b>' + (i ? '' : esc(r.sede.name)) + '</b></td><td>' + esc(fechaTxt(d.fecha)) + '</td><td>' +
+              esc(d.slots.map(function (x) { return x.hora_inicio; }).join(', ')) + ' <span style="color:#666">(' + total + ' cupo' + (total === 1 ? '' : 's') + ')</span></td></tr>';
+          });
+        });
+        html += '</table>';
+      } else {
+        html += '<div style="padding:6px">En este momento ninguna sede tiene cupos para este tramite. Los cupos nuevos salen de domingo a jueves cerca de las 5:00 p.m.</div>';
+      }
+      res.innerHTML = html;
+      scrollPanelTo(res);
+      Array.prototype.forEach.call(res.querySelectorAll('tr.r'), function (tr) {
+        tr.onclick = function () {
+          var sel = $('ag2-sede'); sel.value = tr.getAttribute('data-sede'); sel.dispatchEvent(new Event('change')); save();
+          Array.prototype.forEach.call(res.querySelectorAll('tr.r'), function (x) { x.classList.toggle('sel', x.getAttribute('data-sede') === sel.value); });
+          showMsg('info', 'Sede elegida: ' + selText('ag2-sede'), 'Para agendar ahi: marque una casilla, espere "\u2713 Lista" y pulse <b>BUSCAR Y AGENDAR</b>.<br>' +
+            'Recuerde: la cita es real y solo puede haber una cita activa por tramite.');
+        };
+      });
+      log('Cupos en todas las sedes (' + tram + '): ' + (withSlots.length ? withSlots.map(function (r) { return r.sede.name; }).join(', ') : 'ninguna') + '.');
+    });
+  }
+  $('ag2-all').onclick = scanAll;
+  $('ag2-tram').addEventListener('change', function () { $('ag2-allres').style.display = 'none'; });
 
   window.__agendadorV2 = { show: function () { box.style.display = ''; $('ag2-body').style.display = ''; }, state: st, version: VERSION };
   guide();
